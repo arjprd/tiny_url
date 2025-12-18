@@ -67,11 +67,13 @@
 
 * Use Spring Date Reactive Redis
 * implement sliding window counter
+    * on window start set the key with ttl as window size
+    * decrement value for each request
+    * if value 0 or less show error
 * implement rate limit for ``/{shortURL}`` API based on ``shortURL`` params value
     * pick window from property ``rate_limit.shorten.get.size``
     * pick capacity from property ``rate_limit.shorten.get.capacity``
 * implement rate limit for ``/shorten`` API based on ``username``
-    * start window on first successfull creation
     * pick window from property ``rate_limit.shorten.post.size``
     * pick capacity from property ``rate_limit.shorten.post.capacity``
 
