@@ -75,7 +75,7 @@ public class UrlService {
         // Validate URL
         if (!isValidUrl(longUrl)) {
             ErrorResponse error = new ErrorResponse("INVALID_URL", "Provided URL is invalid");
-            return Mono.just(new ShortenResult(null, error, HttpStatus.BAD_REQUEST));
+            return Mono.just(new ShortenResult(null, error, HttpStatus.UNPROCESSABLE_ENTITY));
         }
 
         // Create hash

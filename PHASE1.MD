@@ -39,7 +39,7 @@
 
 ### Invalid Url
 
-**HTTP STATUS**: 
+**HTTP STATUS**: 422
 ```json
 {
     "code": "INVALID_URL",
