@@ -17,10 +17,11 @@
 * **ResponseBody** : ``{ short_url: <string> }``
 
 ### Logic
-1. Create ``long_url_hash`` from ``body.url`` using ``SHA256`` algorithm
-2. Insert the record into table if ``long_url_hash`` and ``long_url`` not exists
-3. Create a Base62 encoding of the number
-4. Return ``response.body.short_url={host}/{encoded_string}``
+1. Validate if ``body.url`` holds a valid URL expression
+2. Create ``long_url_hash`` from ``body.url`` using ``SHA256`` algorithm
+3. Insert the record into table if ``long_url_hash`` and ``long_url`` not exists
+4. Create a Base62 encoding of the number
+5. Return ``response.body.short_url={host}/{encoded_string}``
 
 ## 2. /{shortURL} API
 
@@ -33,3 +34,44 @@
 2. Get record from table
 3. Create a Base62 encoding of the number
 4. Return ``response.body.short_url={host}/{encoded_string}``
+
+## Error Responses
+
+### Invalid Url
+
+**HTTP STATUS**: 
+```json
+{
+    "code": "INVALID_URL",
+    "message": "Provided URL is invalid"
+}
+
+### Already Present
+
+**HTTP STATUS**: 409
+```json
+{
+    "code": "DUPLICATE_REQUEST",
+    "message": "A short URL exists for the long URL"
+}
+```
+
+### Not Found
+
+**HTTP STATUS**: 404
+```json
+{
+    "code": "NO_RECORD",
+    "message": "A long URL does exists for the short URL"
+}
+```
+
+### Unhandled
+
+**HTTP STATUS**: 500
+```json
+{
+    "code": "SERVER_ERROR",
+    "message": "Something went wrong"
+}
+``
