@@ -32,3 +32,9 @@ use lombok
 create an openapi doc endpoint
 ```
 
+# Phase 3
+
+```
+@PHASE3.md implement caching for `/{shortURL}` API
+```
+
