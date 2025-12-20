@@ -104,3 +104,13 @@ getStatus should be 409,  getError().getCode() should be DUPLICATE_REQUESTand ge
 2. create a user and save, create a shortenUrl using `shortenUrl` method.  Invoke `getLongUrl` concurrently 10 times with the short url from `shortUrl` method call. Only one call should be made to db.
 3. Invoke `getLongUrl`  with the a random url. getLongUrl() should be null, getError().getCode() is NO_RECORD, getError().getMessage() is "A long URL does exists for the short URL" and getStatus() should be 404
 ```
+
+```
+@src/main/java/com/example/tinyurl/service/UserService.java create test case for following scenarios
+1. `createUser` with non alpha numeric username
+2. `createUser` twise for same username, first one would be successfull second one would be 409.
+3. `login` with non alpha numberic username
+4. `login` with wrong password
+5. `login` with wrong username
+6. `login` with correct username and password. verify the token by invoking @src/main/java/com/example/tinyurl/service/TokenAuthenticationService.java `verifyToken`
+```
