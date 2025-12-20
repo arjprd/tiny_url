@@ -144,6 +144,84 @@ public class UserService {
             });
     }
 
+    /**
+     * Logs out a user by removing token(s) from Redis
+     * Logic:
+     * 1. If body.me is true, remove the current user's random key field from redis hashset token:<userId>
+     * 2. If body.all is true, remove the whole hashset token:<userId>
+     */
+    public Mono<LogoutResult> logout(Long userId, String randomToken, Boolean me, Boolean all) {
+        String redisKey = "token:" + userId;
+        ReactiveHashOperations<String, String, String> hashOps = redisTemplate.opsForHash();
+
+        Mono<Void> logoutOperation;
+
+        if (Boolean.TRUE.equals(all)) {
+            // Remove the whole hashset
+            logoutOperation = redisTemplate.delete(redisKey).then();
+        } else if (Boolean.TRUE.equals(me) && randomToken != null) {
+            // Remove the specific field from hashset
+            logoutOperation = hashOps.remove(redisKey, randomToken).then();
+        } else {
+            // No valid operation specified
+            ErrorResponse error = new ErrorResponse("BAD_REQUEST", "Either 'me' or 'all' must be true");
+            return Mono.just(new LogoutResult(null, error, HttpStatus.BAD_REQUEST));
+        }
+
+        return logoutOperation
+            .then(Mono.fromCallable(() -> {
+                SuccessResponse response = new SuccessResponse("LOGGED_OUT", "logged out successfully");
+                return new LogoutResult(response, null, HttpStatus.OK);
+            }))
+            .subscribeOn(Schedulers.boundedElastic())
+            .onErrorResume(e -> {
+                ErrorResponse error = new ErrorResponse("SERVER_ERROR", "Something went wrong");
+                return Mono.just(new LogoutResult(null, error, HttpStatus.INTERNAL_SERVER_ERROR));
+            });
+    }
+
+    /**
+     * Changes user password
+     * Logic:
+     * 1. Get user password hash from table
+     * 2. Compare the hash of body.old_password and the db one
+     * 3. If both are same, hash the new password in body.new_password and update the user's password_hash
+     */
+    public Mono<ChangePasswordResult> changePassword(Long userId, String oldPassword, String newPassword) {
+        // Get user by userId
+        return Mono.fromCallable(() -> userRepository.findById(userId))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMap(optional -> {
+                if (optional.isEmpty()) {
+                    ErrorResponse error = new ErrorResponse("NOT_FOUND", "User not found");
+                    return Mono.just(new ChangePasswordResult(null, error, HttpStatus.NOT_FOUND));
+                }
+
+                User user = optional.get();
+
+                // Compare the hash of old_password and the db one
+                if (!passwordEncoder.matches(oldPassword, user.getPasswordHash())) {
+                    ErrorResponse error = new ErrorResponse("UNAUTHORIZED", "Invalid old password");
+                    return Mono.just(new ChangePasswordResult(null, error, HttpStatus.UNAUTHORIZED));
+                }
+
+                // Hash the new password and update the user's password_hash
+                String newPasswordHash = passwordEncoder.encode(newPassword);
+                user.setPasswordHash(newPasswordHash);
+
+                return Mono.fromCallable(() -> userRepository.save(user))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .map(saved -> {
+                        SuccessResponse response = new SuccessResponse("PASSWORD_UPDATED", "password updated successfully");
+                        return new ChangePasswordResult(response, null, HttpStatus.OK);
+                    });
+            })
+            .onErrorResume(e -> {
+                ErrorResponse error = new ErrorResponse("SERVER_ERROR", "Something went wrong");
+                return Mono.just(new ChangePasswordResult(null, error, HttpStatus.INTERNAL_SERVER_ERROR));
+            });
+    }
+
     // Inner class for result handling
     @lombok.Getter
     @lombok.AllArgsConstructor
@@ -157,6 +235,22 @@ public class UserService {
     @lombok.AllArgsConstructor
     public static class LoginResult {
         private final LoginResponse response;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+
+    @lombok.Getter
+    @lombok.AllArgsConstructor
+    public static class LogoutResult {
+        private final SuccessResponse response;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+
+    @lombok.Getter
+    @lombok.AllArgsConstructor
+    public static class ChangePasswordResult {
+        private final SuccessResponse response;
         private final ErrorResponse error;
         private final HttpStatus status;
     }

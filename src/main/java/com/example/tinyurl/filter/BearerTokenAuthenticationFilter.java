@@ -26,9 +26,14 @@ public class BearerTokenAuthenticationFilter implements WebFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
+        String method = exchange.getRequest().getMethod().name();
         
-        // Only process /shorten endpoint
-        if (!"/shorten".equals(path)) {
+        // Process endpoints that require Bearer token authentication
+        boolean requiresAuth = "/shorten".equals(path) 
+            || "/user/logout".equals(path)
+            || ("/user".equals(path) && "PATCH".equals(method));
+        
+        if (!requiresAuth) {
             return chain.filter(exchange);
         }
 
