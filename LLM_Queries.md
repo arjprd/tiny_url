@@ -65,3 +65,42 @@ create an openapi doc endpoint
 1. invoke repeatedly with a gam of 3 seconds `checkGetRateLimit` with a shortUrl and should return true for the first 10 invcation then it shoul return false. again from 21 st invocation it shold return true.
 2.  invoke repeatedly with a gam of 5 seconds `checkPostRateLimit` with a shortUrl and should return true for the first 5 invcation then it shoul return false. again from 11 th invocation it shold return true.
 ```
+
+```
+@src/main/java/com/example/tinyurl/service/TokenAuthenticationService.java create following test case :
+1. create hash set in redis with key 'token:123'  field 'abcdef' and value true with ttl of 60 sec
+2. encrypt 123
+3. invoke `verifyToken` with string `encrypt(123).'abcdef'`
+4. cast the return of the function to @src/main/java/com/example/tinyurl/util/CustomAuthentication.java  
+5. assert and check getName, getCredentials, getUserId
+```
+```
+@src/main/java/com/example/tinyurl/service/TokenAuthenticationService.java create following test case :
+1. encrypt 123
+2. invoke `verifyToken` with string `encrypt(123).'abcdef'`
+4. return should be empty
+```
+```
+@src/main/java/com/example/tinyurl/service/TokenAuthenticationService.java create following test case :
+1. create hash set in redis with key 'token:123'  field 'abcdef' and value true with ttl of 60 sec
+2. encrypt 123
+3. invoke `verifyToken` with string `encrypt(123).xasdert`
+4. the response of the function should be empty
+```
+
+```
+@src/main/java/com/example/tinyurl/service/UrlService.java create test cases for following scenarios:
+1. invoke `shortenUrl` with and invalid url should assert getResponese() should be null, 
+getStatus should be 400,  getError().getCode() should be INVALID_URL and getError().getMessage() should be "Provided URL is invalid"
+
+2. create a user and save, now invoke `shortenUrl` with a url twice. First time it should respond with getResponese() should be a nonempty string, 
+getStatus should be 200 and getError() shold be null. For the second time getResponese() should be null, 
+getStatus should be 409,  getError().getCode() should be DUPLICATE_REQUESTand getError().getMessage() should be "A short URL exists for the long URL"
+```
+
+```
+@src/main/java/com/example/tinyurl/service/UrlService.java create test case for followign scenarios
+1. create a user and save, create a shortenUrl using `shortenUrl` method.  Invoke `getLongUrl` with the short url from `shortUrl` method call. Retirn of getLongUrl() should get the actual long url.
+2. create a user and save, create a shortenUrl using `shortenUrl` method.  Invoke `getLongUrl` concurrently 10 times with the short url from `shortUrl` method call. Only one call should be made to db.
+3. Invoke `getLongUrl`  with the a random url. getLongUrl() should be null, getError().getCode() is NO_RECORD, getError().getMessage() is "A long URL does exists for the short URL" and getStatus() should be 404
+```
