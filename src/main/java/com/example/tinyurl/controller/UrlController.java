@@ -4,12 +4,20 @@ import com.example.tinyurl.model.ErrorResponse;
 import com.example.tinyurl.model.ShortenRequest;
 import com.example.tinyurl.model.ShortenResponse;
 import com.example.tinyurl.service.UrlService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
 @RestController
+@Tag(name = "URL", description = "URL shortening and redirection APIs")
 public class UrlController {
 
     private final UrlService urlService;
@@ -18,6 +26,22 @@ public class UrlController {
         this.urlService = urlService;
     }
 
+    @Operation(summary = "Shorten a URL", description = "Creates a short URL for the provided long URL. Requires Basic Authentication.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "URL shortened successfully",
+            content = @Content(schema = @Schema(implementation = ShortenResponse.class))),
+        @ApiResponse(responseCode = "400", description = "Invalid URL",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "401", description = "Unauthorized",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "409", description = "Duplicate request - URL already exists",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "429", description = "Rate limit exceeded",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Server error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @SecurityRequirement(name = "basicAuth")
     @PostMapping("/shorten")
     public Mono<ResponseEntity<?>> shortenUrl(@RequestBody ShortenRequest request) {
         return urlService.shortenUrl(request.getUrl())
@@ -34,6 +58,14 @@ public class UrlController {
             });
     }
 
+    @Operation(summary = "Redirect to long URL", description = "Redirects to the original long URL using the short URL code")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "301", description = "Redirect to long URL"),
+        @ApiResponse(responseCode = "404", description = "Short URL not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "429", description = "Rate limit exceeded",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @GetMapping("/{shortURL}")
     public Mono<ResponseEntity<?>> redirect(@PathVariable String shortURL) {
         return urlService.getLongUrl(shortURL)

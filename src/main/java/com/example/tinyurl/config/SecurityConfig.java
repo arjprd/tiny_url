@@ -40,6 +40,7 @@ public class SecurityConfig {
             .authenticationManager(authenticationManager)
             .authorizeExchange(exchanges -> exchanges
                 .pathMatchers("/user").permitAll()
+                .pathMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .pathMatchers("/shorten").authenticated()
                 .anyExchange().permitAll()
             )

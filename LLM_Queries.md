@@ -27,3 +27,8 @@ use lombok
 * implement rate limitng
 * check has to be made as a prefilter for api calls
 ```
+
+```
+create an openapi doc endpoint
+```
+
