@@ -41,3 +41,7 @@ create an openapi doc endpoint
 ```
 @PHASE3.md implement login api
 ```
+
+```
+@PHASE3.md modify authentication mechanism from basic to bearer. Follow the token verification logic
+```

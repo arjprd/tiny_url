@@ -32,7 +32,7 @@ public class AESUtil {
             cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);
 
             byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(encrypted);
+            return Base64.getEncoder().encodeToString(encrypted).replace("==", "");
         } catch (Exception e) {
             throw new RuntimeException("Error encrypting value", e);
         }

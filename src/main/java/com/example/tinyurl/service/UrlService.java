@@ -1,6 +1,7 @@
 package com.example.tinyurl.service;
 
 import com.example.tinyurl.entity.ShortUrl;
+import com.example.tinyurl.entity.User;
 import com.example.tinyurl.model.ErrorResponse;
 import com.example.tinyurl.model.ShortenResponse;
 import com.example.tinyurl.repository.ShortUrlRepository;
@@ -84,8 +85,10 @@ public class UrlService {
 
     /**
      * Shortens a URL
+     * @param longUrl The URL to shorten
+     * @param userId The user ID from request context (from token)
      */
-    public Mono<ShortenResult> shortenUrl(String longUrl) {
+    public Mono<ShortenResult> shortenUrl(String longUrl, Long userId) {
         // Validate URL
         if (!isValidUrl(longUrl)) {
             ErrorResponse error = new ErrorResponse("INVALID_URL", "Provided URL is invalid");
@@ -107,8 +110,8 @@ public class UrlService {
                 return Mono.just(new ShortenResult(null, error, HttpStatus.CONFLICT));
             }
 
-            // Insert new record
-            ShortUrl newShortUrl = new ShortUrl(longUrl, longUrlHash);
+            // Insert new record with owner
+            ShortUrl newShortUrl = new ShortUrl(longUrl, longUrlHash, new User(userId));
             return Mono.fromCallable(() -> shortUrlRepository.save(newShortUrl))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(saved -> {

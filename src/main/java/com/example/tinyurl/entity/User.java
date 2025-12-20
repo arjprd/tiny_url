@@ -16,6 +16,10 @@ import java.time.OffsetDateTime;
 @NoArgsConstructor
 public class User {
 
+    public User(Long userId) {
+        this.id = userId;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

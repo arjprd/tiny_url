@@ -19,11 +19,11 @@ public class OpenApiConfig {
                 .version("1.0.0")
                 .description("API documentation for Tiny URL service"))
             .components(new Components()
-                .addSecuritySchemes("basicAuth", new SecurityScheme()
+                .addSecuritySchemes("bearerAuth", new SecurityScheme()
                     .type(SecurityScheme.Type.HTTP)
-                    .scheme("basic")
-                    .description("Basic Authentication")))
-            .addSecurityItem(new SecurityRequirement().addList("basicAuth"));
+                    .scheme("bearer")
+                    .description("Bearer Token Authentication")))
+            .addSecurityItem(new SecurityRequirement().addList("bearerAuth"));
     }
 }
 

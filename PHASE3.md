@@ -56,6 +56,31 @@ modify logic as follow
 5. Create a Base62 encoding of the number
 6. Return ``response.body.short_url={host}/{encoded_string}``
 
+## Logout API
+
+* **Method** : POST
+* **PATH** : /user/logout
+* **Authorization** : bearer <token>
+* **RequestBody** : ``{ me: true, all: true }``
+* **ResponseBody** : ``{ "code": "LOGGED_OUT", "message": "logged out successfully" }``
+
+### Logic
+1. if `body.me` true then remove the current users random key field from redis hashset `token:<userId>`
+2. if `body.all` true then remove the whole hashset `token:<userId>`
+
+## Change Password
+
+* **Method** : PATCH
+* **PATH** : /user
+* **Authorization** : bearer <token>
+* **RequestBody** : ``{ old_password: string, new_password: string }``
+* **ResponseBody** : ``{ "code": "PASSWORD_UPDATED", "message": "password updated successfully" }``
+
+### Logic
+1. get user password hash from table 
+2. compare the hash of `body.old_password` and the db one 
+3. if both are same hash the new password in `body.new_password` and update the users `password_hash`
+
 # DB Schema
 
 ## alter short_url

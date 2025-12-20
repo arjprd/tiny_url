@@ -9,7 +9,8 @@ import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "short_url", indexes = {
-    @Index(name = "idx_long_url_hash", columnList = "long_url_hash")
+    @Index(name = "idx_long_url_hash", columnList = "long_url_hash"),
+    @Index(name = "idx_owner", columnList = "owner")
 })
 @Getter
 @Setter
@@ -29,9 +30,19 @@ public class ShortUrl {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner", foreignKey = @ForeignKey(name = "fk_short_url_owner"))
+    private User owner;
+
     public ShortUrl(String longUrl, String longUrlHash) {
         this.longUrl = longUrl;
         this.longUrlHash = longUrlHash;
+    }
+
+    public ShortUrl(String longUrl, String longUrlHash, User owner) {
+        this.longUrl = longUrl;
+        this.longUrlHash = longUrlHash;
+        this.owner = owner;
     }
 
     @PrePersist
