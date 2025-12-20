@@ -2,6 +2,8 @@ package com.example.tinyurl.controller;
 
 import com.example.tinyurl.model.CreateUserRequest;
 import com.example.tinyurl.model.ErrorResponse;
+import com.example.tinyurl.model.LoginRequest;
+import com.example.tinyurl.model.LoginResponse;
 import com.example.tinyurl.model.SuccessResponse;
 import com.example.tinyurl.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,6 +40,33 @@ public class UserController {
     @PostMapping("/user")
     public Mono<ResponseEntity<?>> createUser(@RequestBody CreateUserRequest request) {
         return userService.createUser(request.getUsername(), request.getPassword())
+            .map(result -> {
+                if (result.getError() != null) {
+                    // Return error response
+                    return ResponseEntity.status(result.getStatus())
+                        .body(result.getError());
+                } else {
+                    // Return success response
+                    return ResponseEntity.status(result.getStatus())
+                        .body(result.getResponse());
+                }
+            });
+    }
+
+    @Operation(summary = "Login user", description = "Authenticates user and returns a token")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Login successful",
+            content = @Content(schema = @Schema(implementation = LoginResponse.class))),
+        @ApiResponse(responseCode = "400", description = "Invalid username (must be alphanumeric)",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "401", description = "Invalid username or password",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Server error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/user/login")
+    public Mono<ResponseEntity<?>> login(@RequestBody LoginRequest request) {
+        return userService.login(request.getUsername(), request.getPassword())
             .map(result -> {
                 if (result.getError() != null) {
                     // Return error response
