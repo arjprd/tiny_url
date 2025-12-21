@@ -128,3 +128,7 @@ getStatus should be 409,  getError().getCode() should be DUPLICATE_REQUESTand ge
 ```
 @src/main/java/com/example/tinyurl/controller/UrlController.java create one test case each for different responses. consider success case for customShortUrl, expiry and without. for expiry verify by checking in db record
 ```
+
+```
+@src/main/java/com/example/tinyurl/controller/UserController.java  create one test case each for different responses.  the apis give
+```
