@@ -54,7 +54,7 @@ public class UrlController {
             .map(SecurityContext::getAuthentication)
             .cast(CustomAuthentication.class)
             .map(CustomAuthentication::getUserId)
-            .flatMap(userId -> urlService.shortenUrl(request.getUrl(), userId)
+            .flatMap(userId -> urlService.shortenUrl(request.getUrl(), request.getShortUrl(), request.getExpiry(), userId)
                 .map(result -> {
                     if (result.getError() != null) {
                         // Return error response

@@ -1,11 +1,14 @@
 package com.example.tinyurl.service;
 
+import com.example.tinyurl.entity.CustomUrlCode;
 import com.example.tinyurl.entity.ShortUrl;
 import com.example.tinyurl.entity.User;
 import com.example.tinyurl.model.ErrorResponse;
 import com.example.tinyurl.model.ShortenResponse;
+import com.example.tinyurl.repository.CustomUrlCodeRepository;
 import com.example.tinyurl.repository.ShortUrlRepository;
 import com.example.tinyurl.util.Base62Util;
+import jakarta.persistence.EntityManager;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -23,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,7 +34,9 @@ import java.util.UUID;
 public class UrlService {
 
     private final ShortUrlRepository shortUrlRepository;
+    private final CustomUrlCodeRepository customUrlCodeRepository;
     private final ReactiveRedisTemplate<String, String> redisTemplate;
+    private final EntityManager entityManager;
     
     @Value("${app.host:http://localhost:8080}")
     private String host;
@@ -42,9 +48,13 @@ public class UrlService {
     private long lockTtlSeconds;
 
     public UrlService(ShortUrlRepository shortUrlRepository,
-                     @Qualifier("reactiveStringRedisTemplate") ReactiveRedisTemplate<String, String> redisTemplate) {
+                     CustomUrlCodeRepository customUrlCodeRepository,
+                     @Qualifier("reactiveStringRedisTemplate") ReactiveRedisTemplate<String, String> redisTemplate,
+                     EntityManager entityManager) {
         this.shortUrlRepository = shortUrlRepository;
+        this.customUrlCodeRepository = customUrlCodeRepository;
         this.redisTemplate = redisTemplate;
+        this.entityManager = entityManager;
     }
 
     /**
@@ -86,15 +96,43 @@ public class UrlService {
     /**
      * Shortens a URL
      * @param longUrl The URL to shorten
+     * @param customShortUrl Optional custom short URL code
+     * @param expiry Optional expiry timestamp
      * @param userId The user ID from request context (from token)
      */
-    public Mono<ShortenResult> shortenUrl(String longUrl, Long userId) {
+    public Mono<ShortenResult> shortenUrl(String longUrl, String customShortUrl, OffsetDateTime expiry, Long userId) {
         // Validate URL
         if (!isValidUrl(longUrl)) {
             ErrorResponse error = new ErrorResponse("INVALID_URL", "Provided URL is invalid");
             return Mono.just(new ShortenResult(null, error, HttpStatus.BAD_REQUEST));
         }
 
+        // If custom short URL is provided, check if it already exists
+        if (customShortUrl != null && !customShortUrl.trim().isEmpty()) {
+            return Mono.fromCallable(() -> 
+                customUrlCodeRepository.findByCode(customShortUrl)
+            )
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMap(optional -> {
+                if (optional.isPresent()) {
+                    // Custom short URL already exists - return error
+                    ErrorResponse error = new ErrorResponse("DUPLICATE_REQUEST", "Custom short URL already exists");
+                    return Mono.just(new ShortenResult(null, error, HttpStatus.CONFLICT));
+                }
+
+                // Continue with URL creation
+                return createShortUrl(longUrl, customShortUrl, expiry, userId);
+            });
+        } else {
+            // No custom short URL - proceed with normal flow
+            return createShortUrl(longUrl, null, expiry, userId);
+        }
+    }
+
+    /**
+     * Creates a short URL record
+     */
+    private Mono<ShortenResult> createShortUrl(String longUrl, String customShortUrl, OffsetDateTime expiry, Long userId) {
         // Create hash
         String longUrlHash = createHash(longUrl);
 
@@ -112,11 +150,25 @@ public class UrlService {
 
             // Insert new record with owner
             ShortUrl newShortUrl = new ShortUrl(longUrl, longUrlHash, new User(userId));
-            return Mono.fromCallable(() -> shortUrlRepository.save(newShortUrl))
+            newShortUrl.setExpiry(expiry);
+            return Mono.fromCallable(() -> {
+                ShortUrl savedShortUrl = shortUrlRepository.save(newShortUrl);
+                if (customShortUrl != null && !customShortUrl.trim().isEmpty()) { 
+                    CustomUrlCode customCode = new CustomUrlCode(customShortUrl, savedShortUrl);
+                    customUrlCodeRepository.save(customCode);
+                }
+                return savedShortUrl;
+            })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(saved -> {
-                    String shortUrl = host + "/" + Base62Util.encode(saved.getId());
-                    return new ShortenResult(new ShortenResponse(shortUrl), null, HttpStatus.OK);
+                    if (customShortUrl != null && !customShortUrl.trim().isEmpty()) { 
+                        String responseShortUrl = host + "/" + customShortUrl;
+                        return new ShortenResult(new ShortenResponse(responseShortUrl), null, HttpStatus.OK);
+                    } else {
+                        String encoded = "_" + Base62Util.encode(saved.getId());
+                        String responseShortUrl = host + "/" + encoded;
+                        return new ShortenResult(new ShortenResponse(responseShortUrl), null, HttpStatus.OK);
+                    }
                 });
         })
         .onErrorResume(e -> {
@@ -128,56 +180,54 @@ public class UrlService {
     /**
      * Retrieves the long URL from a short URL
      * Implements caching with Redis lock to prevent multiple DB queries for the same record
+     * Logic:
+     * - If shortURL has prefix '_', proceed with existing flow (Base62 decode)
+     * - If no prefix '_', check in custom_url_code table
+     * - Check expiry (expiry > current timestamp or is null)
      */
-    public Mono<RedirectResult> getLongUrl(String shortUrlEncoded) {
-        try {
-            long id = Base62Util.decode(shortUrlEncoded);
-            String cacheKey = "short:" + shortUrlEncoded;
-            String lockKey = "lock:short:" + shortUrlEncoded;
-            
-            ReactiveValueOperations<String, String> valueOps = redisTemplate.opsForValue();
-            
-            // Step 1: Check Redis cache first
-            return valueOps.get(cacheKey)
-                .flatMap(cachedLongUrl -> {
-                    if (cachedLongUrl != null && !cachedLongUrl.isEmpty()) {
-                        // Cache hit - return immediately
-                        return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));
-                    }
-                    
-                    // Cache miss - try to acquire lock
-                    return acquireLock(lockKey)
-                        .flatMap(lockAcquired -> {
-                            if (lockAcquired) {
-                                // This request acquired the lock - query DB and update cache
-                                return queryDbAndUpdateCache(id, cacheKey, lockKey);
-                            } else {
-                                // Another request has the lock - wait and retry cache
-                                return waitAndRetryCache(cacheKey, lockKey, 0);
-                            }
-                        });
-                })
-                .switchIfEmpty(
-                    // Cache key doesn't exist - try to acquire lock
-                    acquireLock(lockKey)
-                        .flatMap(lockAcquired -> {
-                            if (lockAcquired) {
-                                // This request acquired the lock - query DB and update cache
-                                return queryDbAndUpdateCache(id, cacheKey, lockKey);
-                            } else {
-                                // Another request has the lock - wait and retry cache
-                                return waitAndRetryCache(cacheKey, lockKey, 0);
-                            }
-                        })
-                )
-                .onErrorResume(e -> {
-                    ErrorResponse error = new ErrorResponse("NO_RECORD", "A long URL does exists for the short URL");
-                    return Mono.just(new RedirectResult(null, error, HttpStatus.NOT_FOUND));
-                });
-        } catch (IllegalArgumentException e) {
-            ErrorResponse error = new ErrorResponse("NO_RECORD", "A long URL does exists for the short URL");
-            return Mono.just(new RedirectResult(null, error, HttpStatus.NOT_FOUND));
-        }
+    public Mono<RedirectResult> getLongUrl(String shortUrlCode) {
+        String cacheKey = "short:" + shortUrlCode;
+        String lockKey = "lock:short:" + shortUrlCode;
+        
+        ReactiveValueOperations<String, String> valueOps = redisTemplate.opsForValue();
+        
+        // Step 1: Check Redis cache first
+        return valueOps.get(cacheKey)
+            .flatMap(cachedLongUrl -> {
+                if (cachedLongUrl != null && !cachedLongUrl.isEmpty()) {
+                    // Cache hit - return immediately
+                    return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));
+                }
+                
+                // Cache miss - try to acquire lock
+                return acquireLock(lockKey)
+                    .flatMap(lockAcquired -> {
+                        if (lockAcquired) {
+                            // This request acquired the lock - query DB and update cache
+                            return queryDbAndUpdateCache(shortUrlCode, cacheKey, lockKey);
+                        } else {
+                            // Another request has the lock - wait and retry cache
+                            return waitAndRetryCache(cacheKey, lockKey, 0);
+                        }
+                    });
+            })
+            .switchIfEmpty(
+                // Cache key doesn't exist - try to acquire lock
+                acquireLock(lockKey)
+                    .flatMap(lockAcquired -> {
+                        if (lockAcquired) {
+                            // This request acquired the lock - query DB and update cache
+                            return queryDbAndUpdateCache(shortUrlCode, cacheKey, lockKey);
+                        } else {
+                            // Another request has the lock - wait and retry cache
+                            return waitAndRetryCache(cacheKey, lockKey, 0);
+                        }
+                    })
+            )
+            .onErrorResume(e -> {
+                ErrorResponse error = new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL");
+                return Mono.just(new RedirectResult(null, error, HttpStatus.NOT_FOUND));
+            });
     }
 
     /**
@@ -194,32 +244,100 @@ public class UrlService {
 
     /**
      * Queries database and updates Redis cache
+     * Handles both Base62 encoded URLs (with '_' prefix) and custom URL codes
      */
-    private Mono<RedirectResult> queryDbAndUpdateCache(Long id, String cacheKey, String lockKey) {
+    private Mono<RedirectResult> queryDbAndUpdateCache(String shortUrlCode, String cacheKey, String lockKey) {
         ReactiveValueOperations<String, String> valueOps = redisTemplate.opsForValue();
+        OffsetDateTime now = OffsetDateTime.now();
         
-        return Mono.fromCallable(() -> shortUrlRepository.findById(id))
-            .subscribeOn(Schedulers.boundedElastic())
-            .flatMap(optional -> {
-                if (optional.isPresent()) {
-                    String longUrl = optional.get().getLongUrl();
-                    // Update Redis cache with long URL
-                    return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))
-                        .then(releaseLock(lockKey))
-                        .then(Mono.just(new RedirectResult(longUrl, null, HttpStatus.MOVED_PERMANENTLY)));
-                } else {
-                    // Record not found - release lock and return error
+        // Check if shortURL has prefix '_'
+        if (shortUrlCode.startsWith("_")) {
+            // Proceed with existing flow - Base62 decode
+            try {
+                String encoded = shortUrlCode.substring(1); // Remove '_' prefix
+                long id = Base62Util.decode(encoded);
+                
+                return Mono.fromCallable(() -> shortUrlRepository.findById(id))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMap(optional -> {
+                        if (optional.isPresent()) {
+                            ShortUrl shortUrl = optional.get();
+                            
+                            // Check expiry: expiry > current timestamp or is null
+                            if (shortUrl.getExpiry() != null && shortUrl.getExpiry().isBefore(now)) {
+                                // URL has expired
+                                return releaseLock(lockKey)
+                                    .then(Mono.just(new RedirectResult(null, 
+                                        new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                                        HttpStatus.NOT_FOUND)));
+                            }
+                            
+                            String longUrl = shortUrl.getLongUrl();
+                            // Update Redis cache with long URL
+                            return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))
+                                .then(releaseLock(lockKey))
+                                .then(Mono.just(new RedirectResult(longUrl, null, HttpStatus.MOVED_PERMANENTLY)));
+                        } else {
+                            // Record not found - release lock and return error
+                            return releaseLock(lockKey)
+                                .then(Mono.just(new RedirectResult(null, 
+                                    new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                                    HttpStatus.NOT_FOUND)));
+                        }
+                    })
+                    .onErrorResume(e -> {
+                        // On error, release lock
+                        return releaseLock(lockKey)
+                            .then(Mono.just(new RedirectResult(null, 
+                                new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                                HttpStatus.NOT_FOUND)));
+                    });
+            } catch (IllegalArgumentException e) {
+                // Invalid Base62 encoding
+                return releaseLock(lockKey)
+                    .then(Mono.just(new RedirectResult(null, 
+                        new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                        HttpStatus.NOT_FOUND)));
+            }
+        } else {
+            // No prefix '_' - check in custom_url_code table
+            return Mono.fromCallable(() -> customUrlCodeRepository.findByCode(shortUrlCode))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(optional -> {
+                    if (optional.isPresent()) {
+                        CustomUrlCode customCode = optional.get();
+                        ShortUrl shortUrl = customCode.getUrl();
+                        
+                        // Check expiry: expiry > current timestamp or is null
+                        if (shortUrl.getExpiry() != null && shortUrl.getExpiry().isBefore(now)) {
+                            // URL has expired
+                            return releaseLock(lockKey)
+                                .then(Mono.just(new RedirectResult(null, 
+                                    new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                                    HttpStatus.NOT_FOUND)));
+                        }
+                        
+                        String longUrl = shortUrl.getLongUrl();
+                        // Update Redis cache with long URL
+                        return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))
+                            .then(releaseLock(lockKey))
+                            .then(Mono.just(new RedirectResult(longUrl, null, HttpStatus.MOVED_PERMANENTLY)));
+                    } else {
+                        // Custom code not found - release lock and return error
+                        return releaseLock(lockKey)
+                            .then(Mono.just(new RedirectResult(null, 
+                                new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
+                                HttpStatus.NOT_FOUND)));
+                    }
+                })
+                .onErrorResume(e -> {
+                    // On error, release lock
                     return releaseLock(lockKey)
                         .then(Mono.just(new RedirectResult(null, 
-                            new ErrorResponse("NO_RECORD", "A long URL does exists for the short URL"), 
+                            new ErrorResponse("NO_RECORD", "A long URL does not exist for the short URL"), 
                             HttpStatus.NOT_FOUND)));
-                }
-            })
-            .onErrorResume(e -> {
-                // On error, release lock
-                return releaseLock(lockKey)
-                    .then(Mono.error(e));
-            });
+                });
+        }
     }
 
     /**

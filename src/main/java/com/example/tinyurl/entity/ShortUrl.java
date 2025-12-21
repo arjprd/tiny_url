@@ -30,6 +30,9 @@ public class ShortUrl {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "expiry", nullable = true)
+    private OffsetDateTime expiry;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner", foreignKey = @ForeignKey(name = "fk_short_url_owner"))
     private User owner;

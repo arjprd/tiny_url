@@ -24,6 +24,7 @@ import org.springframework.transaction.support.DefaultTransactionDefinition;
 import com.example.tinyurl.config.TestRedisConfig;
 import reactor.test.StepVerifier;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -73,7 +74,7 @@ class UrlServiceTest {
         String invalidUrl = "not-a-valid-url";
 
         // Invoke shortenUrl with invalid URL
-        var resultMono = urlService.shortenUrl(invalidUrl, userId);
+        var resultMono = urlService.shortenUrl(invalidUrl, null, null, userId);
 
         // Assert the result
         StepVerifier.create(resultMono)
@@ -128,7 +129,7 @@ class UrlServiceTest {
         String validUrl = "https://www.example.com/test";
 
         // First invocation - should succeed
-        var firstResultMono = urlService.shortenUrl(validUrl, userId);
+        var firstResultMono = urlService.shortenUrl(validUrl, null, null, userId);
 
         StepVerifier.create(firstResultMono)
             .assertNext(result -> {
@@ -151,7 +152,7 @@ class UrlServiceTest {
             .verifyComplete();
 
         // Second invocation with same URL - should return DUPLICATE_REQUEST
-        var secondResultMono = urlService.shortenUrl(validUrl, userId);
+        var secondResultMono = urlService.shortenUrl(validUrl, null, null, userId);
 
         StepVerifier.create(secondResultMono)
             .assertNext(result -> {
@@ -204,7 +205,7 @@ class UrlServiceTest {
         String longUrl = "https://www.example.com/getlongtest";
 
         // Shorten the URL
-        var shortenResultMono = urlService.shortenUrl(longUrl, userId);
+        var shortenResultMono = urlService.shortenUrl(longUrl, null, null, userId);
 
         String[] shortUrlHolder = new String[1];
         StepVerifier.create(shortenResultMono)
@@ -271,7 +272,7 @@ class UrlServiceTest {
         String longUrl = "https://www.example.com/concurrenttest";
 
         // Shorten the URL
-        var shortenResultMono = urlService.shortenUrl(longUrl, userId);
+        var shortenResultMono = urlService.shortenUrl(longUrl, null, null, userId);
 
         String[] shortUrlHolder = new String[1];
         StepVerifier.create(shortenResultMono)
@@ -369,12 +370,180 @@ class UrlServiceTest {
                     "Error code should be NO_RECORD");
 
                 // getError().getMessage() should be "A long URL does exists for the short URL"
-                assertEquals("A long URL does exists for the short URL", result.getError().getMessage(), 
+                assertEquals("A long URL does not exist for the short URL", result.getError().getMessage(), 
                     "Error message should be 'A long URL does exists for the short URL'");
 
                 // getStatus() should be 404 (NOT_FOUND)
                 assertEquals(HttpStatus.NOT_FOUND, result.getStatus(), 
                     "Status should be NOT_FOUND (404)");
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("Test shortenUrl with customShortUrl: response should contain the customShortUrl")
+    void testShortenUrlWithCustomShortUrl() {
+        // Create and save a user in a separate committed transaction
+        Long userId;
+        {
+            DefaultTransactionDefinition def = new DefaultTransactionDefinition();
+            def.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            TransactionStatus status = transactionManager.getTransaction(def);
+            try {
+                String username = "customurluser";
+                String passwordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+                User user = new User(username, passwordHash);
+                User savedUser = userRepository.save(user);
+                userRepository.flush();
+                userId = savedUser.getId();
+                transactionManager.commit(status);
+            } catch (Exception e) {
+                transactionManager.rollback(status);
+                throw e;
+            }
+        }
+
+        assertNotNull(userId);
+
+        String longUrl = "https://www.example.com/customtest";
+        String customShortUrl = "my-custom-link-123";
+
+        // Invoke shortenUrl with custom short URL
+        var resultMono = urlService.shortenUrl(longUrl, customShortUrl, null, userId);
+
+        StepVerifier.create(resultMono)
+            .assertNext(result -> {
+                // getResponse() should not be null
+                assertNotNull(result.getResponse(), "Response should not be null for custom short URL");
+
+                // getResponse().getShortUrl() should contain the custom short URL
+                assertNotNull(result.getResponse().getShortUrl(), "Short URL should not be null");
+                String responseShortUrl = result.getResponse().getShortUrl();
+                
+                // Extract the code part from "http://localhost:8080/{code}"
+                String codePart = responseShortUrl.substring(responseShortUrl.lastIndexOf('/') + 1);
+                assertEquals(customShortUrl, codePart, 
+                    "Response short URL should contain the custom short URL code");
+
+                // getStatus() should be 200
+                assertEquals(HttpStatus.OK, result.getStatus(), 
+                    "Status should be OK (200) for custom short URL");
+
+                // getError() should be null
+                assertNull(result.getError(), "Error should be null for custom short URL");
+            })
+            .verifyComplete();
+
+        // Verify we can retrieve the long URL using the custom short URL
+        var getLongUrlResultMono = urlService.getLongUrl(customShortUrl);
+
+        StepVerifier.create(getLongUrlResultMono)
+            .assertNext(result -> {
+                assertNotNull(result.getLongUrl(), "Long URL should not be null");
+                assertEquals(longUrl, result.getLongUrl(), 
+                    "Returned long URL should match the original long URL");
+                assertEquals(HttpStatus.MOVED_PERMANENTLY, result.getStatus());
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("Test expiry functionality: shortenUrl with expiry, verify getLongUrl works, wait for expiry, then verify getLongUrl returns NOT_FOUND")
+    void testShortenUrlWithExpiry() throws InterruptedException {
+        // Create and save a user in a separate committed transaction
+        Long userId;
+        {
+            DefaultTransactionDefinition def = new DefaultTransactionDefinition();
+            def.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            TransactionStatus status = transactionManager.getTransaction(def);
+            try {
+                String username = "expiryuser";
+                String passwordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+                User user = new User(username, passwordHash);
+                User savedUser = userRepository.save(user);
+                userRepository.flush();
+                userId = savedUser.getId();
+                transactionManager.commit(status);
+            } catch (Exception e) {
+                transactionManager.rollback(status);
+                throw e;
+            }
+        }
+
+        assertNotNull(userId);
+
+        String longUrl = "https://www.example.com/expirytest";
+        
+        // Set expiry to current timestamp + 60 seconds
+        OffsetDateTime expiry = OffsetDateTime.now().plusSeconds(60);
+
+        // Invoke shortenUrl with expiry
+        var shortenResultMono = urlService.shortenUrl(longUrl, null, expiry, userId);
+
+        String[] shortUrlHolder = new String[1];
+        StepVerifier.create(shortenResultMono)
+            .assertNext(result -> {
+                assertNotNull(result.getResponse(), "Response should not be null");
+                assertNotNull(result.getResponse().getShortUrl(), "Short URL should not be null");
+                assertEquals(HttpStatus.OK, result.getStatus());
+                assertNull(result.getError());
+                shortUrlHolder[0] = result.getResponse().getShortUrl();
+            })
+            .verifyComplete();
+
+        String shortUrlEncoded = shortUrlHolder[0];
+        // Extract the base62 encoded part (remove '_' prefix and host)
+        String encodedPart = shortUrlEncoded.substring(shortUrlEncoded.lastIndexOf('/') + 1);
+
+        // Clear Redis cache to ensure we test the expiry check
+        redisTemplate.delete("short:" + encodedPart).block();
+        redisTemplate.delete("lock:short:" + encodedPart).block();
+
+        // Verify getLongUrl works initially (before expiry)
+        var getLongUrlResultMono1 = urlService.getLongUrl(encodedPart);
+
+        StepVerifier.create(getLongUrlResultMono1)
+            .assertNext(result -> {
+                // getLongUrl() should return the actual long URL (not expired yet)
+                assertNotNull(result.getLongUrl(), "Long URL should not be null before expiry");
+                assertEquals(longUrl, result.getLongUrl(), 
+                    "Returned long URL should match the original long URL");
+                assertNull(result.getError(), "Error should be null before expiry");
+                assertEquals(HttpStatus.MOVED_PERMANENTLY, result.getStatus());
+            })
+            .verifyComplete();
+
+        // Wait for 65 seconds to ensure expiry has passed
+        log.info("Waiting for 65 seconds for URL to expire...");
+        Thread.sleep(65000); // 65 seconds
+        log.info("Wait completed, testing expired URL...");
+
+        // Clear Redis cache again to force DB lookup (which will check expiry)
+        redisTemplate.delete("short:" + encodedPart).block();
+        redisTemplate.delete("lock:short:" + encodedPart).block();
+
+        // Verify getLongUrl returns NOT_FOUND after expiry
+        var getLongUrlResultMono2 = urlService.getLongUrl(encodedPart);
+
+        StepVerifier.create(getLongUrlResultMono2)
+            .assertNext(result -> {
+                // getLongUrl() should be null (expired)
+                assertNull(result.getLongUrl(), "Long URL should be null after expiry");
+
+                // getError() should not be null
+                assertNotNull(result.getError(), "Error should not be null for expired URL");
+
+                // getError().getCode() should be NO_RECORD
+                assertEquals("NO_RECORD", result.getError().getCode(), 
+                    "Error code should be NO_RECORD for expired URL");
+
+                // getError().getMessage() should be "A long URL does not exist for the short URL"
+                assertEquals("A long URL does not exist for the short URL", result.getError().getMessage(), 
+                    "Error message should indicate URL not found");
+
+                // getStatus() should be 404 (NOT_FOUND)
+                assertEquals(HttpStatus.NOT_FOUND, result.getStatus(), 
+                    "Status should be NOT_FOUND (404) for expired URL");
             })
             .verifyComplete();
     }

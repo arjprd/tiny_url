@@ -114,3 +114,17 @@ getStatus should be 409,  getError().getCode() should be DUPLICATE_REQUESTand ge
 5. `login` with wrong username
 6. `login` with correct username and password. verify the token by invoking @src/main/java/com/example/tinyurl/service/TokenAuthenticationService.java `verifyToken`
 ```
+
+```
+@PHASE4.md implement expiration for short_url and custom url
+```
+
+```
+@src/test/java/com/example/tinyurl/service/UrlServiceTest.java add following scenario
+1. `shortenUrl` with customShortUrl and response should have the customShortUrl in shortUrl
+2. `expiry` passed as current timestamp + 60 seconds in `shortenUrl`. Verify `getLongUrl` then wait for 65 seconds then perform `getLongUrl` again should see not found error.
+```
+
+```
+@src/main/java/com/example/tinyurl/controller/UrlController.java create one test case each for different responses. consider success case for customShortUrl, expiry and without. for expiry verify by checking in db record
+```
