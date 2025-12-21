@@ -72,6 +72,7 @@ services:
       AES_SECRET_KEY: ${AES_SECRET_KEY}
       AUTH_TOKEN_RANDOM_LENGTH: ${AUTH_TOKEN_RANDOM_LENGTH:-32}
       AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-3600}
+      ANALYTICS_TIME_KEY_FORMAT: ${ANALYTICS_TIME_KEY_FORMAT:-year.month.day.hour.minute}
     depends_on:
       postgres:
         condition: service_healthy

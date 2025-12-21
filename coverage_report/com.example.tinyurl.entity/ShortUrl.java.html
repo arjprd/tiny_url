@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ShortUrl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.entity</a> &gt; <span class="el_source">ShortUrl.java</span></div><h1>ShortUrl.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.time.OffsetDateTime;
+
+@Entity
+@Table(name = &quot;short_url&quot;, indexes = {
+    @Index(name = &quot;idx_long_url_hash&quot;, columnList = &quot;long_url_hash&quot;),
+    @Index(name = &quot;idx_owner&quot;, columnList = &quot;owner&quot;)
+})
+@Getter
+@Setter
+@NoArgsConstructor
+public class ShortUrl {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = &quot;long_url&quot;, nullable = false, columnDefinition = &quot;TEXT&quot;)
+    private String longUrl;
+
+    @Column(name = &quot;long_url_hash&quot;, nullable = false, length = 64)
+    private String longUrlHash;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(name = &quot;expiry&quot;, nullable = true)
+    private OffsetDateTime expiry;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = &quot;owner&quot;, foreignKey = @ForeignKey(name = &quot;fk_short_url_owner&quot;))
+    private User owner;
+
+<span class="nc" id="L40">    public ShortUrl(String longUrl, String longUrlHash) {</span>
+<span class="nc" id="L41">        this.longUrl = longUrl;</span>
+<span class="nc" id="L42">        this.longUrlHash = longUrlHash;</span>
+<span class="nc" id="L43">    }</span>
+
+<span class="fc" id="L45">    public ShortUrl(String longUrl, String longUrlHash, User owner) {</span>
+<span class="fc" id="L46">        this.longUrl = longUrl;</span>
+<span class="fc" id="L47">        this.longUrlHash = longUrlHash;</span>
+<span class="fc" id="L48">        this.owner = owner;</span>
+<span class="fc" id="L49">    }</span>
+
+    @PrePersist
+    protected void onCreate() {
+<span class="fc" id="L53">        createdAt = OffsetDateTime.now();</span>
+<span class="fc" id="L54">    }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

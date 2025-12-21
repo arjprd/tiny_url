@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AnalyticsDumpScheduler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.scheduler</a> &gt; <span class="el_source">AnalyticsDumpScheduler.java</span></div><h1>AnalyticsDumpScheduler.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.scheduler;
+
+import com.example.tinyurl.service.AnalyticsService;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Set;
+
+<span class="fc" id="L19">@Slf4j</span>
+@Component
+@RequiredArgsConstructor
+public class AnalyticsDumpScheduler {
+
+    private final AnalyticsService analyticsService;
+    private final @Qualifier(&quot;reactiveStringRedisTemplate&quot;) ReactiveRedisTemplate&lt;String, String&gt; redisTemplate;
+
+    @Value(&quot;${analytics.time.key.format:year.month.day.hour}&quot;)
+    private String timeKeyFormat;
+
+    private String dumpCron;
+    private long offsetValue;
+    private String offsetUnit;
+
+    @PostConstruct
+    public void initialize() {
+        // Always infer cron and offset from time key format
+<span class="fc" id="L37">        String lastPart = getLastPartOfTimeKeyFormat();</span>
+        
+        // Infer cron schedule based on time key format
+<span class="pc bpc" id="L40" title="1 of 2 branches missed.">        if (&quot;minute&quot;.equalsIgnoreCase(lastPart)) {</span>
+<span class="fc" id="L41">            dumpCron = &quot;1 * * * * *&quot;; // Every minute at second 1</span>
+<span class="fc" id="L42">            offsetValue = 1;</span>
+<span class="fc" id="L43">            offsetUnit = &quot;minutes&quot;;</span>
+<span class="fc" id="L44">            log.info(&quot;Inferred from time key format (ends with 'minute'): cron = {}, offset = {} {}&quot;, dumpCron, offsetValue, offsetUnit);</span>
+<span class="nc bnc" id="L45" title="All 2 branches missed.">        } else if (&quot;hour&quot;.equalsIgnoreCase(lastPart)) {</span>
+<span class="nc" id="L46">            dumpCron = &quot;0 1 * * * *&quot;; // Every hour at minute 0</span>
+<span class="nc" id="L47">            offsetValue = 1;</span>
+<span class="nc" id="L48">            offsetUnit = &quot;hours&quot;;</span>
+<span class="nc" id="L49">            log.info(&quot;Inferred from time key format (ends with 'hour'): cron = {}, offset = {} {}&quot;, dumpCron, offsetValue, offsetUnit);</span>
+        } else {
+            // Default based on common case (minute-based)
+<span class="nc" id="L52">            dumpCron = &quot;1 * * * * *&quot;;</span>
+<span class="nc" id="L53">            offsetValue = 1;</span>
+<span class="nc" id="L54">            offsetUnit = &quot;minutes&quot;;</span>
+<span class="nc" id="L55">            log.warn(&quot;Could not infer from time key format ending with '{}'. Using defaults: cron = {}, offset = {} {}&quot;, lastPart, dumpCron, offsetValue, offsetUnit);</span>
+        }
+<span class="fc" id="L57">    }</span>
+
+    /**
+     * Gets the last part of the time key format (e.g., &quot;minute&quot; or &quot;hour&quot;)
+     */
+    private String getLastPartOfTimeKeyFormat() {
+<span class="pc bpc" id="L63" title="2 of 4 branches missed.">        if (timeKeyFormat == null || timeKeyFormat.isEmpty()) {</span>
+<span class="nc" id="L64">            return &quot;&quot;;</span>
+        }
+<span class="fc" id="L66">        String[] parts = timeKeyFormat.split(&quot;\\.&quot;);</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        return parts.length &gt; 0 ? parts[parts.length - 1].trim() : &quot;&quot;;</span>
+    }
+
+    /**
+     * Scheduled job that runs to dump analytics data from Redis to database
+     * Looks for key `analytics:t_key` of current timestamp - inferred offset
+     * Cron and offset are automatically inferred from analytics.time.key.format:
+     * - If format ends with &quot;minute&quot;: cron = &quot;1 * * * * *&quot;, offset = &quot;1 minutes&quot;
+     * - If format ends with &quot;hour&quot;: cron = &quot;0 1 * * * *&quot;, offset = &quot;1 hours&quot;
+     * The inferred offset is used for calculating the target time.
+     */
+    @Scheduled(cron = &quot;1 * * * * *&quot;)
+    public void dumpAnalytics() {
+<span class="fc" id="L80">        log.info(&quot;Starting analytics dump job&quot;);</span>
+        
+        // Calculate timestamp with configured offset
+<span class="fc" id="L83">        OffsetDateTime targetTime = calculateTargetTime();</span>
+        
+        // Generate t_key for target time
+<span class="fc" id="L86">        String tKey = analyticsService.generateTimeKey(targetTime);</span>
+<span class="fc" id="L87">        String redisKey = &quot;analytics:&quot; + tKey;</span>
+        
+<span class="fc" id="L89">        log.info(&quot;Dumping analytics for time key: {}&quot;, tKey);</span>
+        
+        // Check if the key exists in Redis
+<span class="fc" id="L92">        redisTemplate.hasKey(redisKey)</span>
+<span class="fc" id="L93">            .flatMap(exists -&gt; {</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">                if (Boolean.TRUE.equals(exists)) {</span>
+<span class="fc" id="L95">                    log.info(&quot;Found analytics data for key: {}&quot;, redisKey);</span>
+                    // Dump the data
+<span class="fc" id="L97">                    return analyticsService.dumpAnalyticsForTimeKey(tKey)</span>
+<span class="fc" id="L98">                        .doOnSuccess(v -&gt; log.info(&quot;Successfully dumped analytics for time key: {}&quot;, tKey))</span>
+<span class="pc" id="L99">                        .doOnError(e -&gt; log.error(&quot;Error dumping analytics for time key: {}&quot;, tKey, e));</span>
+                } else {
+<span class="fc" id="L101">                    log.info(&quot;No analytics data found for key: {}&quot;, redisKey);</span>
+<span class="fc" id="L102">                    return Mono.empty();</span>
+                }
+            })
+<span class="fc" id="L105">            .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L106">            .subscribe(</span>
+<span class="nc" id="L107">                result -&gt; log.info(&quot;Analytics dump job completed&quot;),</span>
+<span class="nc" id="L108">                error -&gt; log.error(&quot;Analytics dump job failed&quot;, error)</span>
+            );
+<span class="fc" id="L110">    }</span>
+
+    /**
+     * Calculates the target time by subtracting the configured offset from current time
+     * 
+     * @return OffsetDateTime with the configured offset subtracted
+     */
+    private OffsetDateTime calculateTargetTime() {
+<span class="fc" id="L118">        OffsetDateTime now = OffsetDateTime.now();</span>
+        
+<span class="pc bpc" id="L120" title="3 of 4 branches missed.">        switch (offsetUnit.toLowerCase()) {</span>
+            case &quot;hours&quot;:
+<span class="nc" id="L122">                return now.minus(offsetValue, ChronoUnit.HOURS);</span>
+            case &quot;minutes&quot;:
+<span class="fc" id="L124">                return now.minus(offsetValue, ChronoUnit.MINUTES);</span>
+            case &quot;seconds&quot;:
+<span class="nc" id="L126">                return now.minus(offsetValue, ChronoUnit.SECONDS);</span>
+            default:
+<span class="nc" id="L128">                log.warn(&quot;Unknown offset unit: {}. Defaulting to hours.&quot;, offsetUnit);</span>
+<span class="nc" id="L129">                return now.minus(offsetValue, ChronoUnit.HOURS);</span>
+        }
+    }
+
+    /**
+     * Helper method to get all analytics keys (for testing/debugging)
+     */
+    public Mono&lt;Set&lt;String&gt;&gt; getAllAnalyticsKeys() {
+<span class="nc" id="L137">        return redisTemplate.keys(&quot;analytics:*&quot;)</span>
+<span class="nc" id="L138">            .collect(java.util.stream.Collectors.toSet())</span>
+<span class="nc" id="L139">            .subscribeOn(Schedulers.boundedElastic());</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

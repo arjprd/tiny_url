@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UrlService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.service</a> &gt; <span class="el_source">UrlService.java</span></div><h1>UrlService.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.service;
+
+import com.example.tinyurl.entity.CustomUrlCode;
+import com.example.tinyurl.entity.ShortUrl;
+import com.example.tinyurl.entity.User;
+import com.example.tinyurl.model.AnalyticsResponse;
+import com.example.tinyurl.model.ErrorResponse;
+import com.example.tinyurl.model.ShortenResponse;
+import com.example.tinyurl.repository.CustomUrlCodeRepository;
+import com.example.tinyurl.repository.ShortUrlClickAnalyticsRepository;
+import com.example.tinyurl.repository.ShortUrlRepository;
+import com.example.tinyurl.util.Base62Util;
+import jakarta.persistence.EntityManager;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.core.ReactiveValueOperations;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Service
+public class UrlService {
+
+    private final ShortUrlRepository shortUrlRepository;
+    private final CustomUrlCodeRepository customUrlCodeRepository;
+    private final ShortUrlClickAnalyticsRepository analyticsRepository;
+    private final ReactiveRedisTemplate&lt;String, String&gt; redisTemplate;
+    private final EntityManager entityManager;
+    private final AnalyticsService analyticsService;
+    
+    @Value(&quot;${app.host:http://localhost:8080}&quot;)
+    private String host;
+
+    @Value(&quot;${cache.short.url.ttl:3600}&quot;)
+    private long cacheTtlSeconds;
+
+    @Value(&quot;${cache.lock.ttl:10}&quot;)
+    private long lockTtlSeconds;
+
+    public UrlService(ShortUrlRepository shortUrlRepository,
+                     CustomUrlCodeRepository customUrlCodeRepository,
+                     ShortUrlClickAnalyticsRepository analyticsRepository,
+                     @Qualifier(&quot;reactiveStringRedisTemplate&quot;) ReactiveRedisTemplate&lt;String, String&gt; redisTemplate,
+                     EntityManager entityManager,
+<span class="fc" id="L61">                     AnalyticsService analyticsService) {</span>
+<span class="fc" id="L62">        this.shortUrlRepository = shortUrlRepository;</span>
+<span class="fc" id="L63">        this.customUrlCodeRepository = customUrlCodeRepository;</span>
+<span class="fc" id="L64">        this.analyticsRepository = analyticsRepository;</span>
+<span class="fc" id="L65">        this.redisTemplate = redisTemplate;</span>
+<span class="fc" id="L66">        this.entityManager = entityManager;</span>
+<span class="fc" id="L67">        this.analyticsService = analyticsService;</span>
+<span class="fc" id="L68">    }</span>
+
+    /**
+     * Validates if the provided string is a valid URL
+     */
+    public boolean isValidUrl(String urlString) {
+<span class="pc bpc" id="L74" title="2 of 4 branches missed.">        if (urlString == null || urlString.trim().isEmpty()) {</span>
+<span class="nc" id="L75">            return false;</span>
+        }
+        try {
+<span class="fc" id="L78">            new URL(urlString);</span>
+<span class="fc" id="L79">            return true;</span>
+<span class="fc" id="L80">        } catch (MalformedURLException e) {</span>
+<span class="fc" id="L81">            return false;</span>
+        }
+    }
+
+    /**
+     * Creates SHA256 hash of the URL
+     */
+    public String createHash(String url) {
+        try {
+<span class="fc" id="L90">            MessageDigest digest = MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="fc" id="L91">            byte[] hash = digest.digest(url.getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L92">            StringBuilder hexString = new StringBuilder();</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">            for (byte b : hash) {</span>
+<span class="fc" id="L94">                String hex = Integer.toHexString(0xff &amp; b);</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">                if (hex.length() == 1) {</span>
+<span class="fc" id="L96">                    hexString.append('0');</span>
+                }
+<span class="fc" id="L98">                hexString.append(hex);</span>
+            }
+<span class="fc" id="L100">            return hexString.toString();</span>
+<span class="nc" id="L101">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L102">            throw new RuntimeException(&quot;SHA-256 algorithm not available&quot;, e);</span>
+        }
+    }
+
+    /**
+     * Shortens a URL
+     * @param longUrl The URL to shorten
+     * @param customShortUrl Optional custom short URL code
+     * @param expiry Optional expiry timestamp
+     * @param userId The user ID from request context (from token)
+     */
+    public Mono&lt;ShortenResult&gt; shortenUrl(String longUrl, String customShortUrl, OffsetDateTime expiry, Long userId) {
+        // Validate URL
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        if (!isValidUrl(longUrl)) {</span>
+<span class="fc" id="L116">            ErrorResponse error = new ErrorResponse(&quot;INVALID_URL&quot;, &quot;Provided URL is invalid&quot;);</span>
+<span class="fc" id="L117">            return Mono.just(new ShortenResult(null, error, HttpStatus.BAD_REQUEST));</span>
+        }
+
+        // If custom short URL is provided, check if it already exists
+<span class="pc bpc" id="L121" title="1 of 4 branches missed.">        if (customShortUrl != null &amp;&amp; !customShortUrl.trim().isEmpty()) {</span>
+<span class="fc" id="L122">            return Mono.fromCallable(() -&gt; </span>
+<span class="fc" id="L123">                customUrlCodeRepository.findByCode(customShortUrl)</span>
+            )
+<span class="fc" id="L125">            .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L126">            .flatMap(optional -&gt; {</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">                if (optional.isPresent()) {</span>
+                    // Custom short URL already exists - return error
+<span class="fc" id="L129">                    ErrorResponse error = new ErrorResponse(&quot;DUPLICATE_REQUEST&quot;, &quot;Custom short URL already exists&quot;);</span>
+<span class="fc" id="L130">                    return Mono.just(new ShortenResult(null, error, HttpStatus.CONFLICT));</span>
+                }
+
+                // Continue with URL creation
+<span class="fc" id="L134">                return createShortUrl(longUrl, customShortUrl, expiry, userId);</span>
+            });
+        } else {
+            // No custom short URL - proceed with normal flow
+<span class="fc" id="L138">            return createShortUrl(longUrl, null, expiry, userId);</span>
+        }
+    }
+
+    /**
+     * Creates a short URL record
+     */
+    private Mono&lt;ShortenResult&gt; createShortUrl(String longUrl, String customShortUrl, OffsetDateTime expiry, Long userId) {
+        // Create hash
+<span class="fc" id="L147">        String longUrlHash = createHash(longUrl);</span>
+
+        // Check if URL already exists
+<span class="fc" id="L150">        return Mono.fromCallable(() -&gt; </span>
+<span class="fc" id="L151">            shortUrlRepository.findByLongUrlHashAndLongUrl(longUrlHash, longUrl)</span>
+        )
+<span class="fc" id="L153">        .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L154">        .flatMap(optional -&gt; {</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">            if (optional.isPresent()) {</span>
+                // URL already exists - return error
+<span class="fc" id="L157">                ErrorResponse error = new ErrorResponse(&quot;DUPLICATE_REQUEST&quot;, &quot;A short URL exists for the long URL&quot;);</span>
+<span class="fc" id="L158">                return Mono.just(new ShortenResult(null, error, HttpStatus.CONFLICT));</span>
+            }
+
+            // Insert new record with owner
+<span class="fc" id="L162">            ShortUrl newShortUrl = new ShortUrl(longUrl, longUrlHash, new User(userId));</span>
+<span class="fc" id="L163">            newShortUrl.setExpiry(expiry);</span>
+<span class="fc" id="L164">            return Mono.fromCallable(() -&gt; {</span>
+<span class="fc" id="L165">                ShortUrl savedShortUrl = shortUrlRepository.save(newShortUrl);</span>
+<span class="pc bpc" id="L166" title="1 of 4 branches missed.">                if (customShortUrl != null &amp;&amp; !customShortUrl.trim().isEmpty()) { </span>
+<span class="fc" id="L167">                    CustomUrlCode customCode = new CustomUrlCode(customShortUrl, savedShortUrl);</span>
+<span class="fc" id="L168">                    customUrlCodeRepository.save(customCode);</span>
+                }
+<span class="fc" id="L170">                return savedShortUrl;</span>
+            })
+<span class="fc" id="L172">                .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L173">                .map(saved -&gt; {</span>
+<span class="pc bpc" id="L174" title="1 of 4 branches missed.">                    if (customShortUrl != null &amp;&amp; !customShortUrl.trim().isEmpty()) { </span>
+<span class="fc" id="L175">                        String responseShortUrl = host + &quot;/&quot; + customShortUrl;</span>
+<span class="fc" id="L176">                        return new ShortenResult(new ShortenResponse(responseShortUrl), null, HttpStatus.OK);</span>
+                    } else {
+<span class="fc" id="L178">                        String encoded = &quot;_&quot; + Base62Util.encode(saved.getId());</span>
+<span class="fc" id="L179">                        String responseShortUrl = host + &quot;/&quot; + encoded;</span>
+<span class="fc" id="L180">                        return new ShortenResult(new ShortenResponse(responseShortUrl), null, HttpStatus.OK);</span>
+                    }
+                });
+        })
+<span class="fc" id="L184">        .onErrorResume(e -&gt; {</span>
+<span class="nc" id="L185">            ErrorResponse error = new ErrorResponse(&quot;SERVER_ERROR&quot;, &quot;Something went wrong&quot;);</span>
+<span class="nc" id="L186">            return Mono.just(new ShortenResult(null, error, HttpStatus.INTERNAL_SERVER_ERROR));</span>
+        });
+    }
+
+    /**
+     * Retrieves the long URL from a short URL
+     * Implements caching with Redis lock to prevent multiple DB queries for the same record
+     * Logic:
+     * - If shortURL has prefix '_', proceed with existing flow (Base62 decode)
+     * - If no prefix '_', check in custom_url_code table
+     * - Check expiry (expiry &gt; current timestamp or is null)
+     */
+    public Mono&lt;RedirectResult&gt; getLongUrl(String shortUrlCode) {
+<span class="fc" id="L199">        String cacheKey = &quot;short:&quot; + shortUrlCode;</span>
+<span class="fc" id="L200">        String lockKey = &quot;lock:short:&quot; + shortUrlCode;</span>
+        
+<span class="fc" id="L202">        ReactiveValueOperations&lt;String, String&gt; valueOps = redisTemplate.opsForValue();</span>
+        
+        // Step 1: Check Redis cache first
+<span class="fc" id="L205">        return valueOps.get(cacheKey)</span>
+<span class="fc" id="L206">            .flatMap(cachedLongUrl -&gt; {</span>
+<span class="nc bnc" id="L207" title="All 4 branches missed.">                if (cachedLongUrl != null &amp;&amp; !cachedLongUrl.isEmpty()) {</span>
+                    // Cache hit - capture analytics and return immediately
+<span class="nc" id="L209">                    analyticsService.click(shortUrlCode, OffsetDateTime.now());</span>
+<span class="nc" id="L210">                    return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));</span>
+                }
+                
+                // Cache miss - try to acquire lock
+<span class="nc" id="L214">                return acquireLock(lockKey)</span>
+<span class="nc" id="L215">                    .flatMap(lockAcquired -&gt; {</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                        if (lockAcquired) {</span>
+                            // This request acquired the lock - query DB and update cache
+<span class="nc" id="L218">                            return queryDbAndUpdateCache(shortUrlCode, cacheKey, lockKey);</span>
+                        } else {
+                            // Another request has the lock - wait and retry cache
+<span class="nc" id="L221">                            return waitAndRetryCache(cacheKey, lockKey, 0);</span>
+                        }
+                    });
+            })
+<span class="fc" id="L225">            .switchIfEmpty(</span>
+                // Cache key doesn't exist - try to acquire lock
+<span class="fc" id="L227">                acquireLock(lockKey)</span>
+<span class="fc" id="L228">                    .flatMap(lockAcquired -&gt; {</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">                        if (lockAcquired) {</span>
+                            // This request acquired the lock - query DB and update cache
+<span class="fc" id="L231">                            return queryDbAndUpdateCache(shortUrlCode, cacheKey, lockKey);</span>
+                        } else {
+                            // Another request has the lock - wait and retry cache
+<span class="fc" id="L234">                            return waitAndRetryCache(cacheKey, lockKey, 0);</span>
+                        }
+                    })
+            )
+<span class="fc" id="L238">            .onErrorResume(e -&gt; {</span>
+<span class="nc" id="L239">                ErrorResponse error = new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;);</span>
+<span class="nc" id="L240">                return Mono.just(new RedirectResult(null, error, HttpStatus.NOT_FOUND));</span>
+            });
+    }
+
+    /**
+     * Acquires a distributed lock using Redis SET NX EX
+     */
+    private Mono&lt;Boolean&gt; acquireLock(String lockKey) {
+<span class="fc" id="L248">        String lockValue = UUID.randomUUID().toString();</span>
+<span class="fc" id="L249">        ReactiveValueOperations&lt;String, String&gt; valueOps = redisTemplate.opsForValue();</span>
+        
+        // SET lockKey lockValue NX EX lockTtlSeconds
+<span class="fc" id="L252">        return valueOps.setIfAbsent(lockKey, lockValue, Duration.ofSeconds(lockTtlSeconds))</span>
+<span class="fc" id="L253">            .map(Boolean::booleanValue);</span>
+    }
+
+    /**
+     * Queries database and updates Redis cache
+     * Handles both Base62 encoded URLs (with '_' prefix) and custom URL codes
+     */
+    private Mono&lt;RedirectResult&gt; queryDbAndUpdateCache(String shortUrlCode, String cacheKey, String lockKey) {
+<span class="fc" id="L261">        ReactiveValueOperations&lt;String, String&gt; valueOps = redisTemplate.opsForValue();</span>
+<span class="fc" id="L262">        OffsetDateTime now = OffsetDateTime.now();</span>
+        
+        // Check if shortURL has prefix '_'
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (shortUrlCode.startsWith(&quot;_&quot;)) {</span>
+            // Proceed with existing flow - Base62 decode
+            try {
+<span class="fc" id="L268">                String encoded = shortUrlCode.substring(1); // Remove '_' prefix</span>
+<span class="fc" id="L269">                long id = Base62Util.decode(encoded);</span>
+                
+<span class="fc" id="L271">                return Mono.fromCallable(() -&gt; shortUrlRepository.findById(id))</span>
+<span class="fc" id="L272">                    .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L273">                    .flatMap(optional -&gt; {</span>
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">                        if (optional.isPresent()) {</span>
+<span class="fc" id="L275">                            ShortUrl shortUrl = optional.get();</span>
+                            
+                            // Check expiry: expiry &gt; current timestamp or is null
+<span class="fc bfc" id="L278" title="All 4 branches covered.">                            if (shortUrl.getExpiry() != null &amp;&amp; shortUrl.getExpiry().isBefore(now)) {</span>
+                                // URL has expired
+<span class="fc" id="L280">                                return releaseLock(lockKey)</span>
+<span class="fc" id="L281">                                    .then(Mono.just(new RedirectResult(null, </span>
+                                        new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                                        HttpStatus.NOT_FOUND)));
+                            }
+                            
+<span class="fc" id="L286">                            String longUrl = shortUrl.getLongUrl();</span>
+                            // Capture analytics before returning successful response
+<span class="fc" id="L288">                            analyticsService.click(shortUrlCode, OffsetDateTime.now());</span>
+                            // Update Redis cache with long URL
+<span class="fc" id="L290">                            return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))</span>
+<span class="fc" id="L291">                                .then(releaseLock(lockKey))</span>
+<span class="fc" id="L292">                                .then(Mono.just(new RedirectResult(longUrl, null, HttpStatus.MOVED_PERMANENTLY)));</span>
+                        } else {
+                            // Record not found - release lock and return error
+<span class="nc" id="L295">                            return releaseLock(lockKey)</span>
+<span class="nc" id="L296">                                .then(Mono.just(new RedirectResult(null, </span>
+                                    new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                                    HttpStatus.NOT_FOUND)));
+                        }
+                    })
+<span class="fc" id="L301">                    .onErrorResume(e -&gt; {</span>
+                        // On error, release lock
+<span class="nc" id="L303">                        return releaseLock(lockKey)</span>
+<span class="nc" id="L304">                            .then(Mono.just(new RedirectResult(null, </span>
+                                new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                                HttpStatus.NOT_FOUND)));
+                    });
+<span class="nc" id="L308">            } catch (IllegalArgumentException e) {</span>
+                // Invalid Base62 encoding
+<span class="nc" id="L310">                return releaseLock(lockKey)</span>
+<span class="nc" id="L311">                    .then(Mono.just(new RedirectResult(null, </span>
+                        new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                        HttpStatus.NOT_FOUND)));
+            }
+        } else {
+            // No prefix '_' - check in custom_url_code table
+<span class="fc" id="L317">            return Mono.fromCallable(() -&gt; customUrlCodeRepository.findByCode(shortUrlCode))</span>
+<span class="fc" id="L318">                .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="fc" id="L319">                .flatMap(optional -&gt; {</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">                    if (optional.isPresent()) {</span>
+<span class="fc" id="L321">                        CustomUrlCode customCode = optional.get();</span>
+<span class="fc" id="L322">                        ShortUrl shortUrl = customCode.getUrl();</span>
+                        
+                        // Check expiry: expiry &gt; current timestamp or is null
+<span class="pc bpc" id="L325" title="3 of 4 branches missed.">                        if (shortUrl.getExpiry() != null &amp;&amp; shortUrl.getExpiry().isBefore(now)) {</span>
+                            // URL has expired
+<span class="nc" id="L327">                            return releaseLock(lockKey)</span>
+<span class="nc" id="L328">                                .then(Mono.just(new RedirectResult(null, </span>
+                                    new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                                    HttpStatus.NOT_FOUND)));
+                        }
+                        
+<span class="fc" id="L333">                        String longUrl = shortUrl.getLongUrl();</span>
+                        // Capture analytics before returning successful response
+<span class="fc" id="L335">                        analyticsService.click(shortUrlCode, OffsetDateTime.now());</span>
+                        // Update Redis cache with long URL
+<span class="fc" id="L337">                        return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))</span>
+<span class="fc" id="L338">                            .then(releaseLock(lockKey))</span>
+<span class="fc" id="L339">                            .then(Mono.just(new RedirectResult(longUrl, null, HttpStatus.MOVED_PERMANENTLY)));</span>
+                    } else {
+                        // Custom code not found - release lock and return error
+<span class="fc" id="L342">                        return releaseLock(lockKey)</span>
+<span class="fc" id="L343">                            .then(Mono.just(new RedirectResult(null, </span>
+                                new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                                HttpStatus.NOT_FOUND)));
+                    }
+                })
+<span class="fc" id="L348">                .onErrorResume(e -&gt; {</span>
+                    // On error, release lock
+<span class="nc" id="L350">                    return releaseLock(lockKey)</span>
+<span class="nc" id="L351">                        .then(Mono.just(new RedirectResult(null, </span>
+                            new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does not exist for the short URL&quot;), 
+                            HttpStatus.NOT_FOUND)));
+                });
+        }
+    }
+
+    /**
+     * Waits for lock to be released and retries cache lookup
+     */
+    private Mono&lt;RedirectResult&gt; waitAndRetryCache(String cacheKey, String lockKey, int retryCount) {
+<span class="fc" id="L362">        final int maxRetries = 20; // Maximum retries (20 * 100ms = 2 seconds max wait)</span>
+<span class="fc" id="L363">        final long waitMillis = 100; // Wait 100ms between retries</span>
+        
+<span class="fc" id="L365">        ReactiveValueOperations&lt;String, String&gt; valueOps = redisTemplate.opsForValue();</span>
+        
+<span class="fc bfc" id="L367" title="All 2 branches covered.">        if (retryCount &gt;= maxRetries) {</span>
+            // Max retries reached - return error
+<span class="fc" id="L369">            ErrorResponse error = new ErrorResponse(&quot;NO_RECORD&quot;, &quot;A long URL does exists for the short URL&quot;);</span>
+<span class="fc" id="L370">            return Mono.just(new RedirectResult(null, error, HttpStatus.NOT_FOUND));</span>
+        }
+        
+        // Check if lock still exists
+<span class="fc" id="L374">        return valueOps.get(lockKey)</span>
+<span class="fc" id="L375">            .flatMap(lockValue -&gt; {</span>
+<span class="pc bpc" id="L376" title="1 of 2 branches missed.">                if (lockValue != null) {</span>
+                    // Lock still exists - wait and retry
+<span class="fc" id="L378">                    return Mono.delay(java.time.Duration.ofMillis(waitMillis))</span>
+<span class="fc" id="L379">                        .then(waitAndRetryCache(cacheKey, lockKey, retryCount + 1));</span>
+                } else {
+                    // Lock released - check cache again
+<span class="nc" id="L382">                    return valueOps.get(cacheKey)</span>
+<span class="nc" id="L383">                        .flatMap(cachedLongUrl -&gt; {</span>
+<span class="nc bnc" id="L384" title="All 4 branches missed.">                            if (cachedLongUrl != null &amp;&amp; !cachedLongUrl.isEmpty()) {</span>
+                                // Cache now has value - return it
+<span class="nc" id="L386">                                return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));</span>
+                            } else {
+                                // Cache still empty - wait a bit more and retry
+<span class="nc" id="L389">                                return Mono.delay(java.time.Duration.ofMillis(waitMillis))</span>
+<span class="nc" id="L390">                                    .then(waitAndRetryCache(cacheKey, lockKey, retryCount + 1));</span>
+                            }
+                        })
+<span class="nc" id="L393">                        .switchIfEmpty(</span>
+                            // Cache key doesn't exist - wait and retry
+<span class="nc" id="L395">                            Mono.delay(java.time.Duration.ofMillis(waitMillis))</span>
+<span class="nc" id="L396">                                .then(waitAndRetryCache(cacheKey, lockKey, retryCount + 1))</span>
+                        );
+                }
+            })
+<span class="fc" id="L400">            .switchIfEmpty(</span>
+                // Lock doesn't exist - check cache
+<span class="fc" id="L402">                valueOps.get(cacheKey)</span>
+<span class="fc" id="L403">                    .flatMap(cachedLongUrl -&gt; {</span>
+<span class="pc bpc" id="L404" title="2 of 4 branches missed.">                        if (cachedLongUrl != null &amp;&amp; !cachedLongUrl.isEmpty()) {</span>
+<span class="fc" id="L405">                            return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));</span>
+                        } else {
+<span class="nc" id="L407">                            return Mono.delay(java.time.Duration.ofMillis(waitMillis))</span>
+<span class="nc" id="L408">                                .then(waitAndRetryCache(cacheKey, lockKey, retryCount + 1));</span>
+                        }
+                    })
+<span class="fc" id="L411">                    .switchIfEmpty(</span>
+<span class="fc" id="L412">                        Mono.delay(java.time.Duration.ofMillis(waitMillis))</span>
+<span class="fc" id="L413">                            .then(waitAndRetryCache(cacheKey, lockKey, retryCount + 1))</span>
+                    )
+            );
+    }
+
+    /**
+     * Releases the distributed lock
+     */
+    private Mono&lt;Boolean&gt; releaseLock(String lockKey) {
+<span class="fc" id="L422">        return redisTemplate.delete(lockKey)</span>
+<span class="pc bpc" id="L423" title="1 of 2 branches missed.">            .map(count -&gt; count &gt; 0);</span>
+    }
+
+    /**
+     * Gets analytics for a short URL code
+     * @param shortUrlCode The short URL code
+     * @param userId The user ID from request context (from token)
+     * @param startDate The start timestamp (inclusive)
+     * @param endDate The end timestamp (inclusive)
+     * @return Mono containing AnalyticsResult with list of analytics or error
+     */
+    public Mono&lt;AnalyticsResult&gt; getAnalytics(String shortUrlCode, Long userId, OffsetDateTime startDate, OffsetDateTime endDate) {
+        // Resolve url_id from shortUrlCode
+<span class="nc" id="L436">        return analyticsService.resolveUrlId(shortUrlCode)</span>
+<span class="nc" id="L437">            .flatMap(urlId -&gt; {</span>
+                // Get ShortUrl entity to verify ownership
+<span class="nc" id="L439">                return Mono.fromCallable(() -&gt; shortUrlRepository.findById(urlId))</span>
+<span class="nc" id="L440">                    .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="nc" id="L441">                    .flatMap(optional -&gt; {</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">                        if (optional.isEmpty()) {</span>
+                            // URL not found
+<span class="nc" id="L444">                            ErrorResponse error = new ErrorResponse(&quot;NO_RECORD&quot;, &quot;Short URL not found&quot;);</span>
+<span class="nc" id="L445">                            return Mono.just(new AnalyticsResult(null, error, HttpStatus.NOT_FOUND));</span>
+                        }
+                        
+<span class="nc" id="L448">                        ShortUrl shortUrl = optional.get();</span>
+                        
+                        // Verify ownership: check if current user is the owner
+<span class="nc bnc" id="L451" title="All 4 branches missed.">                        if (shortUrl.getOwner() == null || !shortUrl.getOwner().getId().equals(userId)) {</span>
+                            // User is not the owner
+<span class="nc" id="L453">                            ErrorResponse error = new ErrorResponse(&quot;FORBIDDEN&quot;, &quot;You are not authorized to view analytics for this URL&quot;);</span>
+<span class="nc" id="L454">                            return Mono.just(new AnalyticsResult(null, error, HttpStatus.FORBIDDEN));</span>
+                        }
+                        
+                        // Query analytics for the time range
+<span class="nc" id="L458">                        return Mono.fromCallable(() -&gt; </span>
+<span class="nc" id="L459">                            analyticsRepository.findByUrlIdAndTimeRange(urlId, startDate, endDate)</span>
+                        )
+<span class="nc" id="L461">                        .subscribeOn(Schedulers.boundedElastic())</span>
+<span class="nc" id="L462">                        .map(analyticsList -&gt; {</span>
+                            // Map to AnalyticsResponse
+<span class="nc" id="L464">                            List&lt;AnalyticsResponse&gt; responseList = analyticsList.stream()</span>
+<span class="nc" id="L465">                                .map(analytics -&gt; new AnalyticsResponse(</span>
+<span class="nc" id="L466">                                    analytics.getTime(),</span>
+<span class="nc" id="L467">                                    analytics.getCount()</span>
+                                ))
+<span class="nc" id="L469">                                .collect(Collectors.toList());</span>
+                            
+<span class="nc" id="L471">                            return new AnalyticsResult(responseList, null, HttpStatus.OK);</span>
+                        });
+                    });
+            })
+<span class="nc" id="L475">            .switchIfEmpty(</span>
+                // URL ID could not be resolved
+<span class="nc" id="L477">                Mono.just(new AnalyticsResult(null, </span>
+                    new ErrorResponse(&quot;NO_RECORD&quot;, &quot;Short URL not found&quot;), 
+                    HttpStatus.NOT_FOUND))
+            )
+<span class="nc" id="L481">            .onErrorResume(e -&gt; {</span>
+                // On error, return server error
+<span class="nc" id="L483">                ErrorResponse error = new ErrorResponse(&quot;SERVER_ERROR&quot;, &quot;Something went wrong&quot;);</span>
+<span class="nc" id="L484">                return Mono.just(new AnalyticsResult(null, error, HttpStatus.INTERNAL_SERVER_ERROR));</span>
+            });
+    }
+
+    // Inner classes for result handling
+    @Getter
+    @AllArgsConstructor
+    public static class ShortenResult {
+        private final ShortenResponse response;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class RedirectResult {
+        private final String longUrl;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class AnalyticsResult {
+        private final List&lt;AnalyticsResponse&gt; response;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

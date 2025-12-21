@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SecurityConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.config</a> &gt; <span class="el_source">SecurityConfig.java</span></div><h1>SecurityConfig.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.config;
+
+import com.example.tinyurl.filter.BearerTokenAuthenticationFilter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.core.userdetails.ReactiveUserDetailsPasswordService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import reactor.core.publisher.Mono;
+
+@Configuration
+@EnableWebFluxSecurity
+public class SecurityConfig {
+
+    private final BearerTokenAuthenticationFilter bearerTokenAuthenticationFilter;
+    private final CustomServerAuthenticationEntryPoint authenticationEntryPoint;
+
+    public SecurityConfig(BearerTokenAuthenticationFilter bearerTokenAuthenticationFilter,
+<span class="fc" id="L26">                         CustomServerAuthenticationEntryPoint authenticationEntryPoint) {</span>
+<span class="fc" id="L27">        this.bearerTokenAuthenticationFilter = bearerTokenAuthenticationFilter;</span>
+<span class="fc" id="L28">        this.authenticationEntryPoint = authenticationEntryPoint;</span>
+<span class="fc" id="L29">    }</span>
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+<span class="fc" id="L33">        return new BCryptPasswordEncoder();</span>
+    }
+
+    @Bean
+    public ReactiveUserDetailsPasswordService userDetailsPasswordService() {
+        // No-op implementation since we're using token-based authentication
+<span class="pc" id="L39">        return (user, newPassword) -&gt; Mono.just(user);</span>
+    }
+
+    @Bean
+    public ReactiveAuthenticationManager authenticationManager() {
+        // Minimal authentication manager - actual authentication is handled by BearerTokenAuthenticationFilter
+<span class="fc" id="L45">        return authentication -&gt; {</span>
+            // If already authenticated (by our custom filter), return as-is
+<span class="nc bnc" id="L47" title="All 2 branches missed.">            if (authentication.isAuthenticated()) {</span>
+<span class="nc" id="L48">                return Mono.just(authentication);</span>
+            }
+            // Otherwise, return empty (authentication will be handled by our custom filter)
+<span class="nc" id="L51">            return Mono.empty();</span>
+        };
+    }
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+<span class="fc" id="L57">        return http</span>
+<span class="fc" id="L58">            .csrf(csrf -&gt; csrf.disable())</span>
+<span class="fc" id="L59">            .authenticationManager(authenticationManager())</span>
+<span class="fc" id="L60">            .httpBasic(httpBasic -&gt; httpBasic.disable())</span>
+<span class="fc" id="L61">            .formLogin(formLogin -&gt; formLogin.disable())</span>
+<span class="fc" id="L62">            .authorizeExchange(exchanges -&gt; exchanges</span>
+<span class="fc" id="L63">                .pathMatchers(HttpMethod.POST, &quot;/user&quot;).permitAll() // POST /user (create user) is public</span>
+<span class="fc" id="L64">                .pathMatchers(&quot;/user/login&quot;).permitAll()</span>
+<span class="fc" id="L65">                .pathMatchers(&quot;/api-docs/**&quot;, &quot;/swagger-ui/**&quot;, &quot;/docs&quot;).permitAll()</span>
+<span class="fc" id="L66">                .pathMatchers(&quot;/shorten&quot;, &quot;/user/logout&quot;).authenticated()</span>
+<span class="fc" id="L67">                .pathMatchers(HttpMethod.PATCH, &quot;/user&quot;).authenticated() // PATCH /user (change password) requires authentication</span>
+<span class="fc" id="L68">                .anyExchange().permitAll()</span>
+            )
+<span class="fc" id="L70">            .addFilterBefore(bearerTokenAuthenticationFilter, SecurityWebFiltersOrder.AUTHENTICATION)</span>
+<span class="fc" id="L71">            .exceptionHandling(exceptions -&gt; exceptions</span>
+<span class="fc" id="L72">                .authenticationEntryPoint(authenticationEntryPoint)</span>
+            )
+<span class="fc" id="L74">            .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

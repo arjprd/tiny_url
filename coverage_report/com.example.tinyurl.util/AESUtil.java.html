@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AESUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.util</a> &gt; <span class="el_source">AESUtil.java</span></div><h1>AESUtil.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.util;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+<span class="nc" id="L8">public class AESUtil {</span>
+
+    private static final String ALGORITHM = &quot;AES&quot;;
+    private static final String TRANSFORMATION = &quot;AES&quot;;
+
+    /**
+     * Encrypts a value using AES-256
+     * @param value The value to encrypt
+     * @param secretKey The secret key (must be 32 bytes for AES-256)
+     * @return Base64 encoded encrypted string
+     */
+    public static String encrypt(String value, String secretKey) {
+        try {
+            // Ensure key is exactly 32 bytes for AES-256
+<span class="fc" id="L22">            byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc bfc" id="L23" title="All 2 branches covered.">            if (keyBytes.length != 32) {</span>
+                // Pad or truncate to 32 bytes
+<span class="fc" id="L25">                byte[] paddedKey = new byte[32];</span>
+<span class="fc" id="L26">                System.arraycopy(keyBytes, 0, paddedKey, 0, Math.min(keyBytes.length, 32));</span>
+<span class="fc" id="L27">                keyBytes = paddedKey;</span>
+            }
+
+<span class="fc" id="L30">            SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, ALGORITHM);</span>
+<span class="fc" id="L31">            Cipher cipher = Cipher.getInstance(TRANSFORMATION);</span>
+<span class="fc" id="L32">            cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);</span>
+
+<span class="fc" id="L34">            byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L35">            return Base64.getEncoder().encodeToString(encrypted).replace(&quot;==&quot;, &quot;&quot;);</span>
+<span class="nc" id="L36">        } catch (Exception e) {</span>
+<span class="nc" id="L37">            throw new RuntimeException(&quot;Error encrypting value&quot;, e);</span>
+        }
+    }
+
+    /**
+     * Decrypts a Base64 encoded encrypted value using AES-256
+     * @param encryptedValue The Base64 encoded encrypted value
+     * @param secretKey The secret key (must be 32 bytes for AES-256)
+     * @return Decrypted string
+     */
+    public static String decrypt(String encryptedValue, String secretKey) {
+        try {
+            // Ensure key is exactly 32 bytes for AES-256
+<span class="fc" id="L50">            byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc bfc" id="L51" title="All 2 branches covered.">            if (keyBytes.length != 32) {</span>
+                // Pad or truncate to 32 bytes
+<span class="fc" id="L53">                byte[] paddedKey = new byte[32];</span>
+<span class="fc" id="L54">                System.arraycopy(keyBytes, 0, paddedKey, 0, Math.min(keyBytes.length, 32));</span>
+<span class="fc" id="L55">                keyBytes = paddedKey;</span>
+            }
+
+<span class="fc" id="L58">            SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, ALGORITHM);</span>
+<span class="fc" id="L59">            Cipher cipher = Cipher.getInstance(TRANSFORMATION);</span>
+<span class="fc" id="L60">            cipher.init(Cipher.DECRYPT_MODE, secretKeySpec);</span>
+
+<span class="fc" id="L62">            byte[] decrypted = cipher.doFinal(Base64.getDecoder().decode(encryptedValue));</span>
+<span class="fc" id="L63">            return new String(decrypted, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L64">        } catch (Exception e) {</span>
+<span class="fc" id="L65">            throw new RuntimeException(&quot;Error decrypting value&quot;, e);</span>
+        }
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

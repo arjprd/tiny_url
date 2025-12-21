@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RateLimitService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">tinyurl</a> &gt; <a href="index.source.html" class="el_package">com.example.tinyurl.service</a> &gt; <span class="el_source">RateLimitService.java</span></div><h1>RateLimitService.java</h1><pre class="source lang-java linenums">package com.example.tinyurl.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.core.ReactiveValueOperations;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+
+@Service
+@RequiredArgsConstructor
+public class RateLimitService {
+
+    private final @Qualifier(&quot;reactiveStringRedisTemplate&quot;) ReactiveRedisTemplate&lt;String, String&gt; redisTemplate;
+
+    @Value(&quot;${rate_limit.shorten.get.size:60}&quot;)
+    private long getWindowSize;
+
+    @Value(&quot;${rate_limit.shorten.get.capacity:10}&quot;)
+    private long getCapacity;
+
+    @Value(&quot;${rate_limit.shorten.post.size:60}&quot;)
+    private long postWindowSize;
+
+    @Value(&quot;${rate_limit.shorten.post.capacity:5}&quot;)
+    private long postCapacity;
+
+    /**
+     * Checks rate limit for GET /{shortURL} based on shortURL parameter
+     */
+    public Mono&lt;Boolean&gt; checkGetRateLimit(String shortURL) {
+<span class="fc" id="L35">        String key = &quot;rate_limit:get:&quot; + shortURL;</span>
+<span class="fc" id="L36">        return checkRateLimit(key, getWindowSize, getCapacity);</span>
+    }
+
+    /**
+     * Checks rate limit for POST /shorten based on username
+     */
+    public Mono&lt;Boolean&gt; checkPostRateLimit(String username) {
+<span class="fc" id="L43">        String key = &quot;rate_limit:post:&quot; + username;</span>
+<span class="fc" id="L44">        return checkRateLimit(key, postWindowSize, postCapacity);</span>
+    }
+
+    /**
+     * Implements sliding window counter:
+     * - On window start, set the key with TTL as window size
+     * - Decrement value for each request
+     * - If value is 0 or less, return false (rate limit exceeded)
+     */
+    private Mono&lt;Boolean&gt; checkRateLimit(String key, long windowSizeSeconds, long capacity) {
+<span class="fc" id="L54">        ReactiveValueOperations&lt;String, String&gt; valueOps = redisTemplate.opsForValue();</span>
+
+<span class="fc" id="L56">        return valueOps.get(key)</span>
+<span class="fc" id="L57">            .flatMap(currentValue -&gt; {</span>
+                try {
+<span class="fc" id="L59">                    long currentCount = Long.parseLong(currentValue);</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">                    if (currentCount &lt;= 0) {</span>
+                        // Rate limit exceeded - value is 0 or less
+<span class="fc" id="L62">                        return Mono.just(false);</span>
+                    } else {
+                        // Decrement value for this request
+<span class="fc" id="L65">                        return valueOps.decrement(key)</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">                            .map(newCount -&gt; newCount &gt;= 0);</span>
+                    }
+<span class="nc" id="L68">                } catch (NumberFormatException e) {</span>
+                    // Invalid value, reset window: set key with capacity and TTL
+<span class="nc" id="L70">                    return valueOps.set(key, String.valueOf(capacity), Duration.ofSeconds(windowSizeSeconds))</span>
+<span class="nc" id="L71">                        .then(valueOps.decrement(key))</span>
+<span class="nc" id="L72">                        .then(Mono.just(true));</span>
+                }
+            })
+<span class="fc" id="L75">            .switchIfEmpty(</span>
+                // Key doesn't exist - window start: set key with capacity and TTL as window size
+                // Then decrement for this request
+<span class="fc" id="L78">                valueOps.set(key, String.valueOf(capacity), Duration.ofSeconds(windowSizeSeconds))</span>
+<span class="fc" id="L79">                    .then(valueOps.decrement(key))</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">                    .map(newCount -&gt; newCount &gt;= 0)</span>
+            );
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
