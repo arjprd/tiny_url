@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tinyurl-postgres
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-tinyurl}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tinyurl-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: tinyurl-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tinyurl-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tinyurl-app
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      # Database Configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tinyurl}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Application Configuration
+      APP_HOST: ${APP_HOST:-http://localhost:8080}
+      
+      # Rate Limiting Configuration
+      RATE_LIMIT_SHORTEN_GET_SIZE: ${RATE_LIMIT_SHORTEN_GET_SIZE:-10}
+      RATE_LIMIT_SHORTEN_GET_CAPACITY: ${RATE_LIMIT_SHORTEN_GET_CAPACITY:-10}
+      RATE_LIMIT_SHORTEN_POST_SIZE: ${RATE_LIMIT_SHORTEN_POST_SIZE:-5}
+      RATE_LIMIT_SHORTEN_POST_CAPACITY: ${RATE_LIMIT_SHORTEN_POST_CAPACITY:-5}
+      
+      # Cache Configuration
+      CACHE_SHORT_URL_TTL: ${CACHE_SHORT_URL_TTL:-3600}
+      CACHE_LOCK_TTL: ${CACHE_LOCK_TTL:-10}
+      
+      # Authentication Configuration
+      AES_SECRET_KEY: ${AES_SECRET_KEY}
+      AUTH_TOKEN_RANDOM_LENGTH: ${AUTH_TOKEN_RANDOM_LENGTH:-32}
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-3600}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tinyurl-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  tinyurl-network:
+    driver: bridge
+

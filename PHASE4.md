@@ -49,7 +49,7 @@
 
 ## Containarise the applicaiton in java-21 alpine 
 
-* create build step of jar in one stahe
+* create build step of jar in one stage
 * use the build jar to create container in next stage
 
 ## Compose
