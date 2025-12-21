@@ -346,5 +346,3 @@ curl --location 'localhost:8080/user/logout' \
 ```
 
 
-
-
