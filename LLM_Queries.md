@@ -132,3 +132,11 @@ getStatus should be 409,  getError().getCode() should be DUPLICATE_REQUESTand ge
 ```
 @src/main/java/com/example/tinyurl/controller/UserController.java  create one test case each for different responses.  the apis give
 ```
+
+```
+@PHASE5.md implement db schema for short_url_click_analytics
+```
+
+```
+@PHASE5.md implement service to capture analytics info to redis
+```

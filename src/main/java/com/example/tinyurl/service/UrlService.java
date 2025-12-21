@@ -3,9 +3,11 @@ package com.example.tinyurl.service;
 import com.example.tinyurl.entity.CustomUrlCode;
 import com.example.tinyurl.entity.ShortUrl;
 import com.example.tinyurl.entity.User;
+import com.example.tinyurl.model.AnalyticsResponse;
 import com.example.tinyurl.model.ErrorResponse;
 import com.example.tinyurl.model.ShortenResponse;
 import com.example.tinyurl.repository.CustomUrlCodeRepository;
+import com.example.tinyurl.repository.ShortUrlClickAnalyticsRepository;
 import com.example.tinyurl.repository.ShortUrlRepository;
 import com.example.tinyurl.util.Base62Util;
 import jakarta.persistence.EntityManager;
@@ -27,16 +29,20 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class UrlService {
 
     private final ShortUrlRepository shortUrlRepository;
     private final CustomUrlCodeRepository customUrlCodeRepository;
+    private final ShortUrlClickAnalyticsRepository analyticsRepository;
     private final ReactiveRedisTemplate<String, String> redisTemplate;
     private final EntityManager entityManager;
+    private final AnalyticsService analyticsService;
     
     @Value("${app.host:http://localhost:8080}")
     private String host;
@@ -49,12 +55,16 @@ public class UrlService {
 
     public UrlService(ShortUrlRepository shortUrlRepository,
                      CustomUrlCodeRepository customUrlCodeRepository,
+                     ShortUrlClickAnalyticsRepository analyticsRepository,
                      @Qualifier("reactiveStringRedisTemplate") ReactiveRedisTemplate<String, String> redisTemplate,
-                     EntityManager entityManager) {
+                     EntityManager entityManager,
+                     AnalyticsService analyticsService) {
         this.shortUrlRepository = shortUrlRepository;
         this.customUrlCodeRepository = customUrlCodeRepository;
+        this.analyticsRepository = analyticsRepository;
         this.redisTemplate = redisTemplate;
         this.entityManager = entityManager;
+        this.analyticsService = analyticsService;
     }
 
     /**
@@ -195,7 +205,8 @@ public class UrlService {
         return valueOps.get(cacheKey)
             .flatMap(cachedLongUrl -> {
                 if (cachedLongUrl != null && !cachedLongUrl.isEmpty()) {
-                    // Cache hit - return immediately
+                    // Cache hit - capture analytics and return immediately
+                    analyticsService.click(shortUrlCode, OffsetDateTime.now());
                     return Mono.just(new RedirectResult(cachedLongUrl, null, HttpStatus.MOVED_PERMANENTLY));
                 }
                 
@@ -273,6 +284,8 @@ public class UrlService {
                             }
                             
                             String longUrl = shortUrl.getLongUrl();
+                            // Capture analytics before returning successful response
+                            analyticsService.click(shortUrlCode, OffsetDateTime.now());
                             // Update Redis cache with long URL
                             return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))
                                 .then(releaseLock(lockKey))
@@ -318,6 +331,8 @@ public class UrlService {
                         }
                         
                         String longUrl = shortUrl.getLongUrl();
+                        // Capture analytics before returning successful response
+                        analyticsService.click(shortUrlCode, OffsetDateTime.now());
                         // Update Redis cache with long URL
                         return valueOps.set(cacheKey, longUrl, Duration.ofSeconds(cacheTtlSeconds))
                             .then(releaseLock(lockKey))
@@ -408,6 +423,68 @@ public class UrlService {
             .map(count -> count > 0);
     }
 
+    /**
+     * Gets analytics for a short URL code
+     * @param shortUrlCode The short URL code
+     * @param userId The user ID from request context (from token)
+     * @param startDate The start timestamp (inclusive)
+     * @param endDate The end timestamp (inclusive)
+     * @return Mono containing AnalyticsResult with list of analytics or error
+     */
+    public Mono<AnalyticsResult> getAnalytics(String shortUrlCode, Long userId, OffsetDateTime startDate, OffsetDateTime endDate) {
+        // Resolve url_id from shortUrlCode
+        return analyticsService.resolveUrlId(shortUrlCode)
+            .flatMap(urlId -> {
+                // Get ShortUrl entity to verify ownership
+                return Mono.fromCallable(() -> shortUrlRepository.findById(urlId))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMap(optional -> {
+                        if (optional.isEmpty()) {
+                            // URL not found
+                            ErrorResponse error = new ErrorResponse("NO_RECORD", "Short URL not found");
+                            return Mono.just(new AnalyticsResult(null, error, HttpStatus.NOT_FOUND));
+                        }
+                        
+                        ShortUrl shortUrl = optional.get();
+                        
+                        // Verify ownership: check if current user is the owner
+                        if (shortUrl.getOwner() == null || !shortUrl.getOwner().getId().equals(userId)) {
+                            // User is not the owner
+                            ErrorResponse error = new ErrorResponse("FORBIDDEN", "You are not authorized to view analytics for this URL");
+                            return Mono.just(new AnalyticsResult(null, error, HttpStatus.FORBIDDEN));
+                        }
+                        
+                        // Query analytics for the time range
+                        return Mono.fromCallable(() -> 
+                            analyticsRepository.findByUrlIdAndTimeRange(urlId, startDate, endDate)
+                        )
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .map(analyticsList -> {
+                            // Map to AnalyticsResponse
+                            List<AnalyticsResponse> responseList = analyticsList.stream()
+                                .map(analytics -> new AnalyticsResponse(
+                                    analytics.getTime(),
+                                    analytics.getCount()
+                                ))
+                                .collect(Collectors.toList());
+                            
+                            return new AnalyticsResult(responseList, null, HttpStatus.OK);
+                        });
+                    });
+            })
+            .switchIfEmpty(
+                // URL ID could not be resolved
+                Mono.just(new AnalyticsResult(null, 
+                    new ErrorResponse("NO_RECORD", "Short URL not found"), 
+                    HttpStatus.NOT_FOUND))
+            )
+            .onErrorResume(e -> {
+                // On error, return server error
+                ErrorResponse error = new ErrorResponse("SERVER_ERROR", "Something went wrong");
+                return Mono.just(new AnalyticsResult(null, error, HttpStatus.INTERNAL_SERVER_ERROR));
+            });
+    }
+
     // Inner classes for result handling
     @Getter
     @AllArgsConstructor
@@ -421,6 +498,14 @@ public class UrlService {
     @AllArgsConstructor
     public static class RedirectResult {
         private final String longUrl;
+        private final ErrorResponse error;
+        private final HttpStatus status;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class AnalyticsResult {
+        private final List<AnalyticsResponse> response;
         private final ErrorResponse error;
         private final HttpStatus status;
     }

@@ -31,7 +31,8 @@ public class BearerTokenAuthenticationFilter implements WebFilter, Ordered {
         // Process endpoints that require Bearer token authentication
         boolean requiresAuth = "/shorten".equals(path) 
             || "/user/logout".equals(path)
-            || ("/user".equals(path) && "PATCH".equals(method));
+            || ("/user".equals(path) && "PATCH".equals(method))
+            || (path.startsWith("/url/") && "GET".equals(method));
         
         if (!requiresAuth) {
             return chain.filter(exchange);
