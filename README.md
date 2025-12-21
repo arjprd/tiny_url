@@ -346,3 +346,12 @@ curl --location 'localhost:8080/user/logout' \
 ```
 
 
+## LLM Queries & Planning Phases
+
+* [LLM Queries](LLM_Queries.md)
+* [Phase 1](PHASE1.md)
+* [Phase 2](PHASE2.md)
+* [Phase 3](PHASE3.md)
+* [Phase 4](PHASE4.md)
+* [Phase 5](PHASE5.md)
+* [Infra Design](https://drive.google.com/file/d/1jtZU4kQAPGfJX-amyrOhSLpVM7o1_mob/view?usp=sharing) Not Implemented
