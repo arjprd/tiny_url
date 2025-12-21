@@ -2,7 +2,9 @@
 
 ## Modify `/{shortURL}` API
 
-* in case of db query check the length of shortURL if greater than 11 then look in custome_url_code else proceed with existing logic
+* if value not found in cache then 
+* check if `shortURL` has prefix '_' then proceed with existing flow
+* else if now prefix '_' check `shortURL` in `custome_url_code` table, if not exists respond the n 404 response.]
 * bring record from short_url if expiry greater that current timestamp or is null
 
 ## Shorten API (Modify)
@@ -21,13 +23,13 @@
 
 ### Logic
 1. Validate if ``body.url`` holds a valid URL expression
-2. if ``body.short_url`` if present check length >= 12 and check if exists in custome_url_code if exists respond duplicate error
+2. if ``body.short_url`` present, then check if exists in `custome_url_code` table. if exists respond duplicate error
 3. Create ``long_url_hash`` from ``body.url`` using ``SHA256`` algorithm
 4. Get `userId` from request context.
 5. Use `body.expiry` to set as expiry in table
 6. Insert the record into table if ``long_url_hash`` and ``long_url`` not exists
 7. Insert into ``body.short_url`` into custome_url_code
-8. Create a Base62 encoding of the number
+8. Create a Base62 encoding of the number and add prefix '_'
 9. Return if ``body.short_url`` present ``response.body.short_url={host}/{body.short_url}`` else ``response.body.short_url={host}/{encoded_string}`` 
 
 # DB Schema
