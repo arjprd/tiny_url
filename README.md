@@ -251,7 +251,7 @@ Run tests using Maven:
 
 ## Test Coverage Report
 
-View the test coverage report: [Coverage Report](coverage_report/index.html)
+View the test coverage report: [Coverage Report](https://htmlpreview.github.io/?https://github.com/arjprd/tiny_url/blob/main/coverage_report/index.html)
 
 To generate a new coverage report:
 
