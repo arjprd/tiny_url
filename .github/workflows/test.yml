@@ -134,8 +134,4 @@ jobs:
             echo "Warning: Some services may not be running"
             docker compose ps
           fi
-      
-      - name: Stop Docker Compose services
-        if: always()
-        run: docker compose down -v || true
 
