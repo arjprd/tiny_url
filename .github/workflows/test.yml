@@ -18,10 +18,7 @@ jobs:
           docker --version
           docker compose version
       
-      - name: Make setup.sh executable
-        run: chmod +x setup.sh
-      
-      - name: Run setup.sh with default values
+      - name: Setup environment variables
         env:
           # Database Configuration
           DB_USERNAME: postgres
@@ -53,31 +50,75 @@ jobs:
           
           # Analytics Configuration
           ANALYTICS_TIME_KEY_FORMAT: year.month.day.hour.minute
-          CI: true
         run: |
-          # Create a wrapper script that modifies setup.sh to run docker compose in detached mode
-          # Backup original setup.sh
-          cp setup.sh setup.sh.backup
+          # Create .env file
+          cat > .env << EOF
+          # Database Configuration
+          DB_USERNAME=$DB_USERNAME
+          DB_PASSWORD=$DB_PASSWORD
+          DB_NAME=$DB_NAME
+          DB_PORT=$DB_PORT
           
-          # Modify the last line to run in detached mode
-          sed -i 's/docker compose up --build/docker compose up --build -d/' setup.sh
+          # Redis Configuration
+          REDIS_PORT=$REDIS_PORT
           
-          # Provide default answers to interactive prompts
-          # Format: 'y' for overwrite prompt, then defaults for each prompt
-          printf "y\npostgres\npostgres\ntinyurl\n5432\nhttp://localhost:8080\n8080\n6379\n10\n10\n5\n5\n120\n10\n12345678901234567890123456789012\n32\n3600\nyear.month.day.hour.minute\n" | timeout 300 ./setup.sh || true
+          # Application Configuration
+          APP_HOST=$APP_HOST
+          APP_PORT=$APP_PORT
           
-          # Restore original setup.sh
-          mv setup.sh.backup setup.sh
+          # Rate Limiting Configuration
+          RATE_LIMIT_SHORTEN_GET_SIZE=$RATE_LIMIT_SHORTEN_GET_SIZE
+          RATE_LIMIT_SHORTEN_GET_CAPACITY=$RATE_LIMIT_SHORTEN_GET_CAPACITY
+          RATE_LIMIT_SHORTEN_POST_SIZE=$RATE_LIMIT_SHORTEN_POST_SIZE
+          RATE_LIMIT_SHORTEN_POST_CAPACITY=$RATE_LIMIT_SHORTEN_POST_CAPACITY
+          
+          # Cache Configuration
+          CACHE_SHORT_URL_TTL=$CACHE_SHORT_URL_TTL
+          CACHE_LOCK_TTL=$CACHE_LOCK_TTL
+          
+          # Authentication Configuration
+          AES_SECRET_KEY=$AES_SECRET_KEY
+          AUTH_TOKEN_RANDOM_LENGTH=$AUTH_TOKEN_RANDOM_LENGTH
+          AUTH_TOKEN_TTL=$AUTH_TOKEN_TTL
+          
+          # Analytics Configuration
+          ANALYTICS_TIME_KEY_FORMAT=$ANALYTICS_TIME_KEY_FORMAT
+          EOF
+          
+          echo ".env file created successfully"
+          cat .env
+          
+          # Export environment variables
+          export DB_USERNAME DB_PASSWORD DB_NAME DB_PORT
+          export REDIS_PORT
+          export APP_HOST APP_PORT
+          export RATE_LIMIT_SHORTEN_GET_SIZE RATE_LIMIT_SHORTEN_GET_CAPACITY
+          export RATE_LIMIT_SHORTEN_POST_SIZE RATE_LIMIT_SHORTEN_POST_CAPACITY
+          export CACHE_SHORT_URL_TTL CACHE_LOCK_TTL
+          export AES_SECRET_KEY AUTH_TOKEN_RANDOM_LENGTH AUTH_TOKEN_TTL
+          export ANALYTICS_TIME_KEY_FORMAT
       
-      - name: Verify .env file was created
+      - name: Run docker compose up --build
+        env:
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: tinyurl
+          DB_PORT: 5432
+          REDIS_PORT: 6379
+          APP_HOST: http://localhost:8080
+          APP_PORT: 8080
+          RATE_LIMIT_SHORTEN_GET_SIZE: 10
+          RATE_LIMIT_SHORTEN_GET_CAPACITY: 10
+          RATE_LIMIT_SHORTEN_POST_SIZE: 5
+          RATE_LIMIT_SHORTEN_POST_CAPACITY: 5
+          CACHE_SHORT_URL_TTL: 120
+          CACHE_LOCK_TTL: 10
+          AES_SECRET_KEY: 12345678901234567890123456789012
+          AUTH_TOKEN_RANDOM_LENGTH: 32
+          AUTH_TOKEN_TTL: 3600
+          ANALYTICS_TIME_KEY_FORMAT: year.month.day.hour.minute
         run: |
-          if [ -f .env ]; then
-            echo ".env file created successfully"
-            cat .env
-          else
-            echo "Error: .env file was not created"
-            exit 1
-          fi
+          docker compose up --build -d
       
       - name: Wait for services to be ready
         run: |
